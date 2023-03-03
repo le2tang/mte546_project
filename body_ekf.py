@@ -1,19 +1,7 @@
 import numpy as np
 
-class BodyModel:
+class PoseModel:
     def __init__(self):
-        # Body frame:
-        # origin: sternum
-        # x: backwards to forwards
-        # y: right to left
-        # z: down to up
-
-        # Body frame measurements
-        self.right_shoulder = np.array([[0, -0.2, 0.2]]).T
-        self.left_shoulder = np.array([[0, 0.2, 0.2]]).T
-        self.right_hip = np.array([[0, -0.18, -0.35]]).T
-        self.left_hip = np.array([[0, 0.18, 0.35]]).T
-
         self.dt = 0.1
 
     def forward_model(self, state):
@@ -42,36 +30,20 @@ class BodyModel:
         # Derivative of angular velocity is 0
 
         return jacobian
-
+    
     def measurement_model(self, state):
-        # Only use the first three rows since the last row is for homogeneous coordinates
-        world_to_body_tf = self._state_tf(state)[:3, :]
-
-        right_shoulder_world = world_to_body_tf @ self._augment(self.right_shoulder)
-        left_shoulder_world = world_to_body_tf @ self._augment(self.left_shoulder)
-        right_hip_world = world_to_body_tf @ self._augment(self.right_hip)
-        left_hip_world = world_to_body_tf @ self._augment(self.left_hip)
-
-        return np.concatenate((right_shoulder_world, left_shoulder_world, right_hip_world, left_hip_world))
-
+        return np.concatenate((self._state_position, self._state_orientation))
+        
     def measurement_jacobian(self, state):
-        jacobian = np.zeros((12, 13))
+        jacobian = np.zeros((7, 13))
 
         # Derivative with respect to position
         jacobian[:3, :3] = np.eye(3)
-        jacobian[3:6, :3] = np.eye(3)
-        jacobian[6:9, :3] = np.eye(3)
-        jacobian[9:, :3] = np.eye(3)
 
         # Derivative with respect to orientation
-        orientation = self._state_orientation(state)
-        jacobian[:3, 6:10] = self._orientation_jacobian(self.right_shoulder, orientation)[1:, :]
-        jacobian[3:6, 6:10] = self._orientation_jacobian(self.left_shoulder, orientation)[1:, :]
-        jacobian[6:9, 6:10] = self._orientation_jacobian(self.right_hip, orientation)[1:, :]
-        jacobian[9:, 6:10] = self._orientation_jacobian(self.left_hip, orientation)[1:, :]
-
+        jacobian[3:, 6:10] = np.eye(4)
         return jacobian
-    
+
     def _orientation_jacobian(self, point, orientation):
         # d(qpq^-1) / dq
 
@@ -103,7 +75,7 @@ class BodyModel:
     def _state_tf(self, state):
         tf = np.zeros((4, 4))
         tf[:3, :3] = self._quat_rot_mat(self._state_orientation(state))
-        tf[:3, 3] = self._state_position(state)
+        tf[:3, 3] = self._state_position(state).flatten()
         return tf
     
     def _quat_lmul_mat(self, q):
@@ -149,6 +121,53 @@ class BodyModel:
             [2*(q[1]*q[2]+q[3]*q[0]), 1-2*(q[1]*q[1]+q[3]*q[3]), 2*(q[2]*q[3]-q[1]*q[0])],
             [2*(q[1]*q[3]-q[2]*q[0]), 2*(q[2]*q[3]+q[1]*q[0]), 1-2*(q[1]*q[1]+q[2]*q[2])]
         ])
+
+
+class BodyModel(PoseModel):
+    def __init__(self):
+        # Body frame:
+        # origin: sternum
+        # x: backwards to forwards
+        # y: right to left
+        # z: down to up
+
+        # Body frame measurements
+        self.right_shoulder = np.array([[0, -0.2, 0.2]]).T
+        self.left_shoulder = np.array([[0, 0.2, 0.2]]).T
+        self.right_hip = np.array([[0, -0.18, -0.35]]).T
+        self.left_hip = np.array([[0, 0.18, 0.35]]).T
+
+        self.dt = 0.1
+
+    def measurement_model(self, state):
+        # Only use the first three rows since the last row is for homogeneous coordinates
+        world_to_body_tf = self._state_tf(state)[:3, :]
+
+        right_shoulder_world = world_to_body_tf @ self._augment(self.right_shoulder)
+        left_shoulder_world = world_to_body_tf @ self._augment(self.left_shoulder)
+        right_hip_world = world_to_body_tf @ self._augment(self.right_hip)
+        left_hip_world = world_to_body_tf @ self._augment(self.left_hip)
+
+        return np.concatenate((right_shoulder_world, left_shoulder_world, right_hip_world, left_hip_world))
+
+    def measurement_jacobian(self, state):
+        jacobian = np.zeros((12, 13))
+
+        # Derivative with respect to position
+        jacobian[:3, :3] = np.eye(3)
+        jacobian[3:6, :3] = np.eye(3)
+        jacobian[6:9, :3] = np.eye(3)
+        jacobian[9:, :3] = np.eye(3)
+
+        # Derivative with respect to orientation
+        orientation = self._state_orientation(state)
+        jacobian[:3, 6:10] = self._orientation_jacobian(self.right_shoulder, orientation)[1:, :]
+        jacobian[3:6, 6:10] = self._orientation_jacobian(self.left_shoulder, orientation)[1:, :]
+        jacobian[6:9, 6:10] = self._orientation_jacobian(self.right_hip, orientation)[1:, :]
+        jacobian[9:, 6:10] = self._orientation_jacobian(self.left_hip, orientation)[1:, :]
+
+        return jacobian
+    
 
 class EKF:
     def _init_(self, model):
@@ -206,8 +225,18 @@ if __name__ == "__main__":
         0, 0, 0]]).T
     print(body_model.forward_jacobian(test_state))
 
-    print("Measurement Model")
-
+    print("Measurement Model Linear Translation")
+    test_state = np.array([[
+        0, 1, 0,
+        0, 0, 0,
+        1, 0, 0, 0,
+        0, 0, 0]]).T
+    print(body_model.measurement_model(test_state))
 
     print("Measuremtent Jacobian")
+    test_state = np.array([[
+        0, 1, 0,
+        0, 0, 0,
+        1, 0, 0, 0,
+        0, 0, 0]]).T
     print(body_model.measurement_jacobian(test_state))
