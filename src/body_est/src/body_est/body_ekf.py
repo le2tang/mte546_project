@@ -1,5 +1,6 @@
 import numpy as np
 
+
 class PoseModel:
     def __init__(self):
         self.dt = 0.1

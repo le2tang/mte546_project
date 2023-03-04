@@ -44,26 +44,17 @@ class PoseEstimation:
             logger_name=self.logger_name,
         )
 
-        # Action
-        self.pose_estimation_server = SimpleActionServer(
-            "/pose_estimation",
-            PoseEstimationAction,
-            self.execute_cb,
-            False,
-        )
-        self.pose_estimation_server.start()
-        self.result = PoseEstimationResult()
-
         # Rviz visualization
         self.point_viz_topic = "/point_viz"
         self.point_viz_pub = rospy.Publisher(
             self.point_viz_topic, PointStamped, queue_size=10
         )
+        # TODO need a publisher for EKF to take in measurement
 
         # transforms
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
-        self.ref_link = "base_link"
+        self.ref_link = "camera_link"
         self.depth_optical_link_frame = "optical_depth_link_frame"
 
         # landmarks
@@ -99,10 +90,14 @@ class PoseEstimation:
             "camera/color/image_raw", Image, self.rgb_image_cb
         )
 
+        self.got_new_depth = False
+        self.got_intrinsics = False
+
     def depth_image_cb(self, data):
         # store the latest depth image for processing
         try:
             self.depth_img = self.cv_bridge.imgmsg_to_cv2(data, "16UC1")
+            self.got_new_rgb = True
         except CvBridgeError as e:
             rospy.loginfo(e)
 
@@ -110,6 +105,23 @@ class PoseEstimation:
         # store the latest color image for processing
         try:
             self.rgb_img = self.cv_bridge.imgmsg_to_cv2(data, "bgr8")
+            # only execute when have updated instrinsics, depth, and rgb
+            if self.got_new_depth == True and self.got_intrinsics == True:
+                # set updated depth to be false to wait until new depth and rgb 
+                self.got_new_depth = False
+                with mp.solutions.pose.Pose(
+                    static_image_mode=True,
+                    model_complexity=2,
+                    enable_segmentation=True,
+                    min_detection_confidence=0.5,
+                ) as pose:
+                    self.rgb_img.flags.writeable = False
+                    image = cv2.cvtColor(self.rgb_img, cv2.COLOR_BGR2RGB)
+                    results = pose.process(image)
+                    landmarks_list = results.pose_landmarks.landmark
+                    landmarks = self.pose_estimate_body(landmarks_list)
+                    # publish to node?
+
         except CvBridgeError as e:
             rospy.loginfo(e)
 
@@ -132,62 +144,7 @@ class PoseEstimation:
         self.camera_intrinsics.width = info.width
         self.camera_intrinsics.height = info.height
         rospy.loginfo(f"Got camera intrinsics {self.camera_intrinsics}")
-
-    def execute_cb(self, goal):
-        rospy.loginfo(f"Recieved target {goal.target}. Beginning pose estimation")
-
-        with mp.solutions.pose.Pose(
-            static_image_mode=True,
-            model_complexity=2,
-            enable_segmentation=True,
-            min_detection_confidence=0.5,
-        ) as pose:
-            self.rgb_img.flags.writeable = False
-            image = cv2.cvtColor(self.rgb_img, cv2.COLOR_BGR2RGB)
-            results = pose.process(image)
-            landmarks_list = results.pose_landmarks.landmark
-
-            if goal.target == "body":
-                self.pose_estimate_body(landmarks_list)
-                self.pose_estimation_server.set_succeeded(self.result)
-            elif goal.target == "head":
-                rospy.loginfo(f"Head not implemented")
-                self.result.pose_est_fail = 2
-                self.pose_estimation_server.set_aborted(self.result)
-                return
-            else:
-                rospy.loginfo(f"Need valid target")
-                self.result.pose_est_fail = 3
-                self.pose_estimation_server.set_aborted(self.result)
-
-    def preempt_cb(self):
-        pass
-
-    def pose_estimate_head(self, landmarks_list):
-        # get landmarks of eyes and mouth
-        # average the landmarks positions
-        # return that point
-
-        average_head_point = PointStamped()
-        n_ignored_pts = 0
-        for lm in self.lm_face:
-            landmark_data = landmarks_list[lm.value]
-            if landmark_data.visibility > self.landmark_vis_thresh:
-                average_head_point.header.frame_id = self.depth_optical_link_frame
-                average_head_point.point.x += landmark_data.x
-                average_head_point.point.y += landmark_data.y
-                average_head_point.point.z += landmark_data.z
-            else:
-                rospy.loginfo(f"Ignored point {lm}")
-                n_ignored_pts += 1
-
-        n_points = len(self.lm_face) - n_ignored_pts
-        average_head_point.point.x /= n_points
-        average_head_point.point.y /= n_points
-        average_head_point.point.z /= n_points
-
-        rospy.loginfo(f"{average_head_point}")
-        return average_head_point
+        self.got_intrinsics = True
 
     def pose_estimate_body(self, landmarks_list):
         # dict {'landmark_id': {'mp_landmark': landmark, 'point': PointStamped}}
@@ -215,13 +172,16 @@ class PoseEstimation:
         # get landmarks coords
         for lm in self.lm_body:
             # transform landmark to 3D pose and transform coords to base link
-            landmarks[lm.value]["point"] = self.transform_point_baselink(
+            landmarks[lm.value]["point"] = self.transform_point_cameralink(
                 self.landmark_to_3d(landmarks[lm.value]["point"])
             )
             # visualize points in Rviz
             self.point_viz_pub.publish(landmarks[lm.value]["point"])
 
         # rospy.loginfo(f"Transformed {landmarks}")
+
+        # returns a dictionary of the landmarks, their info, and their 3D coordinate
+        return landmarks
 
     def compute_unit_normal(self, landmarks, align_vertical=False):
         # takes in landmarks and finds unit normal of plane
@@ -295,7 +255,9 @@ class PoseEstimation:
 
         return new_point_stamped
 
-    def transform_point_baselink(self, point_stamped):
+    def transform_point_cameralink(self, point_stamped):
+        # transforms from the optical lens to the camera link
+        # flips point into more reasonable coordinate frame
         while not rospy.is_shutdown():
             try:
                 # rospy.loginfo(f"point before {point_stamped}")
