@@ -62,8 +62,8 @@ class PoseEstimation:
         self.lm_body = [
             Landmarks.RIGHT_SHOULDER,
             Landmarks.LEFT_SHOULDER,
-#            Landmarks.RIGHT_HIP,
-#            Landmarks.LEFT_HIP,
+            #            Landmarks.RIGHT_HIP,
+            #            Landmarks.LEFT_HIP,
         ]
 
         # TODO need to set a threshold to determine if joint is visible
@@ -128,7 +128,6 @@ class PoseEstimation:
                     self.pose_viz_pub.publish(
                         landmarks[Landmarks.LEFT_HIP.value]["pose"]
                     )
-
 
         except CvBridgeError as e:
             rospy.loginfo(e)
@@ -214,6 +213,20 @@ class PoseEstimation:
         plane_normal = np.cross(vector_1, vector_2)
         plane_unit_normal = plane_normal / np.linalg.norm(plane_normal)
         return plane_unit_normal
+
+    def est_torso_pt(self, landmarks):
+        # take in 3-4 points, use vectors to find the axes
+        # average xyz values to get a point
+        p1 = landmarks[Landmarks.LEFT_SHOULDER.value]["pose"].pose.position
+        p2 = landmarks[Landmarks.RIGHT_SHOULDER.value]["pose"].pose.position
+        p3 = landmarks[Landmarks.RIGHT_HIP.value]["pose"].pose.position
+        p4 = landmarks[Landmarks.LEFT_HIP.value]["pose"].pose.position
+
+        x = (p1.x + p2.x + p3.x + p4.x) / 4
+        y = (p1.y + p2.y + p3.y + p4.y) / 4
+        z = (p1.z + p2.z + p3.z + p4.z) / 4
+
+        return 1
 
     def landmark_to_3d(self, pose_stamped):
         # Compute the 3D coordinate of each pose. 3D values in mm
