@@ -38,11 +38,13 @@ class Landmarks(Enum):
 class PoseEstimation:
     def __init__(self):
         self.logger_name = "pose_estimation"
-        rospy.init_node("pose_estimation_server", anonymous=True)
+        rospy.init_node("body_est", anonymous=True)
         rospy.loginfo(
             "Starting the Perception pose estimation node",
             logger_name=self.logger_name,
         )
+        self.got_new_depth = False
+        self.got_intrinsics = False
 
         # Rviz visualization and published topic
         self.pose_viz_topic = "/pose_viz"
@@ -60,14 +62,10 @@ class PoseEstimation:
         self.lm_body = [
             Landmarks.RIGHT_SHOULDER,
             Landmarks.LEFT_SHOULDER,
+#            Landmarks.RIGHT_HIP,
+#            Landmarks.LEFT_HIP,
         ]
-        self.lm_face = [
-            Landmarks.LEFT_EYE,
-            Landmarks.MOUTH_RIGHT,
-            Landmarks.NOSE,
-            Landmarks.MOUTH_LEFT,
-            Landmarks.MOUTH_RIGHT,
-        ]
+
         # TODO need to set a threshold to determine if joint is visible
         self.landmark_vis_thresh = 0.9
 
@@ -87,9 +85,6 @@ class PoseEstimation:
         self.image_sub = rospy.Subscriber(
             "camera/color/image_raw", Image, self.rgb_image_cb
         )
-
-        self.got_new_depth = False
-        self.got_intrinsics = False
 
     def depth_image_cb(self, data):
         # store the latest depth image for processing
@@ -118,11 +113,22 @@ class PoseEstimation:
                     results = pose.process(image)
                     landmarks_list = results.pose_landmarks.landmark
                     landmarks = self.pose_estimate_body(landmarks_list)
+                    rospy.loginfo(f"Landmarks {landmarks}")
 
                     # process landmarks a bit
                     self.pose_viz_pub.publish(
-                        landmarks[Landmarks.RIGHT_SHOULDER]["pose"]
+                        landmarks[Landmarks.RIGHT_SHOULDER.value]["pose"]
                     )
+                    self.pose_viz_pub.publish(
+                        landmarks[Landmarks.LEFT_SHOULDER.value]["pose"]
+                    )
+                    self.pose_viz_pub.publish(
+                        landmarks[Landmarks.RIGHT_HIP.value]["pose"]
+                    )
+                    self.pose_viz_pub.publish(
+                        landmarks[Landmarks.LEFT_HIP.value]["pose"]
+                    )
+
 
         except CvBridgeError as e:
             rospy.loginfo(e)
@@ -177,11 +183,6 @@ class PoseEstimation:
             landmarks[lm.value]["pose"] = self.transform_pose_cameralink(
                 self.landmark_to_3d(landmarks[lm.value]["pose"])
             )
-            # visualize points in Rviz
-            self.pose.publish(landmarks[lm.value]["pose"])
-
-        # rospy.loginfo(f"Transformed {landmarks}")
-
         # returns a dictionary of the landmarks, their info, and their 3D coordinate
         return landmarks
 
@@ -189,9 +190,9 @@ class PoseEstimation:
         # takes in landmarks and finds unit normal of plane
         # second point is the center point for the vectors
         # to be "crossed" upon
-        p1 = landmarks[Landmarks.LEFT_SHOULDER.value]["pose"].position
-        p2 = landmarks[Landmarks.RIGHT_SHOULDER.value]["pose"].position
-        p3 = landmarks[Landmarks.RIGHT_EYE.value]["pose"].position
+        p1 = landmarks[Landmarks.LEFT_SHOULDER.value]["pose"].pose.position
+        p2 = landmarks[Landmarks.RIGHT_SHOULDER.value]["pose"].pose.position
+        p3 = landmarks[Landmarks.RIGHT_HIP.value]["pose"].pose.position
 
         vector_1 = np.array(
             [
@@ -200,35 +201,14 @@ class PoseEstimation:
                 p1.z - p2.z,
             ]
         )
-
-        # rospy.loginfo(f"Align vertical {align_vertical}")
-        vector_2 = None
-        if align_vertical == True:
-            # place point directly vertical in Z direction to constrain the plane
-            # to be vertical. using shoulders and a synthetic vertical point
-            forced_v_point = copy.deepcopy(
-                landmarks[Landmarks.RIGHT_SHOULDER.value]["point"]
-            )
-            forced_v_point.point.z += 0.2  # add arbitrary value to get a vertical plane
-            rospy.loginfo(f"Forced point {forced_v_point}")
-            self.point_viz_pub.publish(forced_v_point)
-
-            vector_2 = np.array(
-                [
-                    forced_v_point.point.x - p2.x,
-                    forced_v_point.point.y - p2.y,
-                    forced_v_point.point.z - p2.z,
-                ]
-            )
-        else:
-            # using another landmark
-            vector_2 = np.array(
-                [
-                    p3.x - p2.x,
-                    p3.y - p2.y,
-                    p3.z - p2.z,
-                ]
-            )
+        # using another landmark
+        vector_2 = np.array(
+            [
+                p3.x - p2.x,
+                p3.y - p2.y,
+                p3.z - p2.z,
+            ]
+        )
 
         # might need to check direction is no into bed
         plane_normal = np.cross(vector_1, vector_2)
@@ -237,8 +217,8 @@ class PoseEstimation:
 
     def landmark_to_3d(self, pose_stamped):
         # Compute the 3D coordinate of each pose. 3D values in mm
-        x_pixel = int(pose_stamped.position.x * self.camera_intrinsics.width)
-        y_pixel = int(pose_stamped.position.y * self.camera_intrinsics.height)
+        x_pixel = int(pose_stamped.pose.position.x * self.camera_intrinsics.width)
+        y_pixel = int(pose_stamped.pose.position.y * self.camera_intrinsics.height)
 
         depth = self.depth_img[y_pixel][x_pixel]
 
@@ -251,9 +231,9 @@ class PoseEstimation:
         # deproject returns an array of points
         new_pose_stamped = PoseStamped()
         new_pose_stamped.header.frame_id = pose_stamped.header.frame_id
-        new_pose_stamped.position.x = point_vals[0] * self.MM_TO_M
-        new_pose_stamped.position.y = point_vals[1] * self.MM_TO_M
-        new_pose_stamped.position.z = point_vals[2] * self.MM_TO_M
+        new_pose_stamped.pose.position.x = point_vals[0] * self.MM_TO_M
+        new_pose_stamped.pose.position.y = point_vals[1] * self.MM_TO_M
+        new_pose_stamped.pose.position.z = point_vals[2] * self.MM_TO_M
 
         return new_pose_stamped
 
