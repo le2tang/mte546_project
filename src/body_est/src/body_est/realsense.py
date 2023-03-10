@@ -1,7 +1,7 @@
 import rospy
 from actionlib import SimpleActionServer
 
-from tf2_geometry_msgs import PointStamped, PoseStamped
+from tf2_geometry_msgs import PointStamped 
 from tf.transformations import quaternion_from_euler
 import tf2_ros
 
@@ -48,9 +48,9 @@ class PoseEstimation:
         self.got_intrinsics = False
 
         # Rviz visualization and published topic
-        self.pose_viz_topic = "/pose_viz"
-        self.pose_viz_pub = rospy.Publisher(
-            self.pose_viz_topic, PoseStamped, queue_size=10
+        self.point_viz_topic = "/point_viz"
+        self.point_viz_pub = rospy.Publisher(
+            self.point_viz_topic, PointStamped, queue_size=10
         )
 
         # transforms
@@ -117,17 +117,17 @@ class PoseEstimation:
                     rospy.loginfo(f"Landmarks {landmarks}")
 
                     # process landmarks a bit
-                    self.pose_viz_pub.publish(
-                        landmarks[Landmarks.RIGHT_SHOULDER.value]["pose"]
+                    self.point_viz_pub.publish(
+                        landmarks[Landmarks.RIGHT_SHOULDER.value]["point"]
                     )
-                    self.pose_viz_pub.publish(
-                        landmarks[Landmarks.LEFT_SHOULDER.value]["pose"]
+                    self.point_viz_pub.publish(
+                        landmarks[Landmarks.LEFT_SHOULDER.value]["point"]
                     )
-                    self.pose_viz_pub.publish(
-                        landmarks[Landmarks.RIGHT_HIP.value]["pose"]
+                    self.point_viz_pub.publish(
+                        landmarks[Landmarks.RIGHT_HIP.value]["point"]
                     )
-                    self.pose_viz_pub.publish(
-                        landmarks[Landmarks.LEFT_HIP.value]["pose"]
+                    self.point_viz_pub.publish(
+                        landmarks[Landmarks.LEFT_HIP.value]["point"]
                     )
 
 
@@ -167,22 +167,22 @@ class PoseEstimation:
             if landmark_data.visibility < self.landmark_vis_thresh:
                 return
 
-            lm_pose = PoseStamped()
-            lm_pose.header.frame_id = self.depth_optical_link_frame
-            lm_pose.pose.position.x = landmark_data.x
-            lm_pose.pose.position.y = landmark_data.y
-            lm_pose.pose.position.z = landmark_data.z
+            lm_point = PontStamped()
+            lm_point.header.frame_id = self.depth_optical_link_frame
+            lm_point.point.x = landmark_data.x
+            lm_point.point.y = landmark_data.y
+            lm_point.point.z = landmark_data.z
             landmarks[lm.value] = {
                 "mp_landmark": landmark_data,
-                "pose": lm_pose,
+                "point": lm_point,
             }
         # rospy.loginfo(f"{landmarks}")
 
         # get landmarks coords
         for lm in self.lm_body:
             # transform landmark to 3D pose and transform coords to base link
-            landmarks[lm.value]["pose"] = self.transform_pose_cameralink(
-                self.landmark_to_3d(landmarks[lm.value]["pose"])
+            landmarks[lm.value]["point"] = self.transform_point_cameralink(
+                self.landmark_to_3d(landmarks[lm.value]["point"])
             )
         # returns a dictionary of the landmarks, their info, and their 3D coordinate
         unit_nrml_x = compute_unit_normal(landmarks)
@@ -213,9 +213,9 @@ class PoseEstimation:
         # takes in landmarks and finds unit normal of plane
         # second point is the center point for the vectors
         # to be "crossed" upon
-        p1 = landmarks[Landmarks.LEFT_SHOULDER.value]["pose"].pose.position
-        p2 = landmarks[Landmarks.RIGHT_SHOULDER.value]["pose"].pose.position
-        p3 = landmarks[Landmarks.RIGHT_HIP.value]["pose"].pose.position
+        p1 = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
+        p2 = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
+        p3 = landmarks[Landmarks.RIGHT_HIP.value]["point"].point
 
         vector_1 = np.array(
             [
@@ -241,10 +241,10 @@ class PoseEstimation:
     def est_torso_pt(self, landmarks):
         # take in 3-4 points, use vectors to find the axes
         # average xyz values to get a point
-        p1 = landmarks[Landmarks.LEFT_SHOULDER.value]["pose"].pose.position
-        p2 = landmarks[Landmarks.RIGHT_SHOULDER.value]["pose"].pose.position
-        p3 = landmarks[Landmarks.RIGHT_HIP.value]["pose"].pose.position
-        p4 = landmarks[Landmarks.LEFT_HIP.value]["pose"].pose.position
+        p1 = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
+        p2 = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
+        p3 = landmarks[Landmarks.RIGHT_HIP.value]["point"].point
+        p4 = landmarks[Landmarks.LEFT_HIP.value]["point"].point
 
         x = (p1.x + p2.x + p3.x + p4.x) / 4
         y = (p1.y + p2.y + p3.y + p4.y) / 4
@@ -252,10 +252,10 @@ class PoseEstimation:
 
         return 1
 
-    def landmark_to_3d(self, pose_stamped):
+    def landmark_to_3d(self, point_stamped):
         # Compute the 3D coordinate of each pose. 3D values in mm
-        x_pixel = int(pose_stamped.pose.position.x * self.camera_intrinsics.width)
-        y_pixel = int(pose_stamped.pose.position.y * self.camera_intrinsics.height)
+        x_pixel = int(point_stamped.point.x * self.camera_intrinsics.width)
+        y_pixel = int(point_stamped.point.y * self.camera_intrinsics.height)
 
         depth = self.depth_img[y_pixel][x_pixel]
 
@@ -266,26 +266,26 @@ class PoseEstimation:
         )
 
         # deproject returns an array of points
-        new_pose_stamped = PoseStamped()
-        new_pose_stamped.header.frame_id = pose_stamped.header.frame_id
-        new_pose_stamped.pose.position.x = point_vals[0] * self.MM_TO_M
-        new_pose_stamped.pose.position.y = point_vals[1] * self.MM_TO_M
-        new_pose_stamped.pose.position.z = point_vals[2] * self.MM_TO_M
+        new_point_stamped = PointStamped()
+        new_point_stamped.header.frame_id = point_stamped.header.frame_id
+        new_point_stamped.point.x = point_vals[0] * self.MM_TO_M
+        new_point_stamped.point.y = point_vals[1] * self.MM_TO_M
+        new_point_stamped.point.z = point_vals[2] * self.MM_TO_M
 
-        return new_pose_stamped
+        return new_point_stamped
 
-    def transform_pose_cameralink(self, pose_stamped):
+    def transform_point_cameralink(self, point_stamped):
         # transforms from the optical lens to the camera link
         # flips point into more reasonable coordinate frame
         while not rospy.is_shutdown():
             try:
                 # rospy.loginfo(f"point before {point_stamped}")
-                transformed_pose = self.tf_buffer.transform(
-                    pose_stamped,
+                transformed_point = self.tf_buffer.transform(
+                    point_stamped,
                     self.ref_link,  # rospy.Time()
                 )
                 # rospy.loginfo(f"point after {transformed_point}")
-                return transformed_pose
+                return transformed_point
             except (
                 tf2_ros.LookupException,
                 tf2_ros.ConnectivityException,
