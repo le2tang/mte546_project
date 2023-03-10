@@ -183,9 +183,12 @@ class PoseEstimation:
                 self.landmark_to_3d(landmarks[lm.value]["pose"])
             )
         # returns a dictionary of the landmarks, their info, and their 3D coordinate
+        unit_nrml = compute_unit_normal(landmarks)
+        position = est_torso_pt(landmarks)
+
         return landmarks
 
-    def compute_unit_normal(self, landmarks, align_vertical=False):
+    def compute_unit_normal(self, landmarks):
         # takes in landmarks and finds unit normal of plane
         # second point is the center point for the vectors
         # to be "crossed" upon
