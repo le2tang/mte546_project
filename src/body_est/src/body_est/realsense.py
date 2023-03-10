@@ -2,6 +2,7 @@ import rospy
 from actionlib import SimpleActionServer
 
 from tf2_geometry_msgs import PointStamped, PoseStamped
+from tf.transformations import quaternion_from_euler
 import tf2_ros
 
 from sensor_msgs.msg import Image, CameraInfo
@@ -129,6 +130,7 @@ class PoseEstimation:
                         landmarks[Landmarks.LEFT_HIP.value]["pose"]
                     )
 
+
         except CvBridgeError as e:
             rospy.loginfo(e)
 
@@ -183,8 +185,27 @@ class PoseEstimation:
                 self.landmark_to_3d(landmarks[lm.value]["pose"])
             )
         # returns a dictionary of the landmarks, their info, and their 3D coordinate
-        unit_nrml = compute_unit_normal(landmarks)
+        unit_nrml_x = compute_unit_normal(landmarks)
+        unit_nrml_y = np.array(-unit_nrml_x[1], unit_nrml_x[0], unit_nrml_x[2])
+        unit_nrml_z = np.array(-unit_nrml_x[2], unit_nrml_x[1], unit_nrml_x[0])
+
         position = est_torso_pt(landmarks)
+
+        x_unit = np.array([1, 0, 0])
+        y_unit = np.array([0, 1, 0])
+        z_unit = np.array([0, 0, 1])
+
+        def compute_euler_ang(target_v, unit_v)
+            c = np.dot(target_v, unit_v)/np.linalg.norm(target_v)/np.linalg.norm(unit_v)
+            angle = np.arccos(np.clip(c, -1, 1))
+            return angle
+    
+        alpha = compute_euler_ang(unit_nrml_x, x_unit) 
+        beta = compute_euler_ang(unit_nrml_y, y_unit)
+        gamma = compute_euler_ang(unit_nrml_z, z_unit)
+
+        q = quaternion_from_euler(alpha, beta, gamma)
+        torso_pose = [position.x, position.y, position.z, q.x, q.y, q.z, q.w]
 
         return landmarks
 
