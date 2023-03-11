@@ -1,7 +1,7 @@
 import rospy
 from actionlib import SimpleActionServer
 
-from tf2_geometry_msgs import PointStamped 
+from tf2_geometry_msgs import PointStamped
 from tf.transformations import quaternion_from_euler
 import tf2_ros
 
@@ -87,6 +87,26 @@ class PoseEstimation:
             "camera/color/image_raw", Image, self.rgb_image_cb
         )
 
+        # Rotation matrices
+        self.theta = 90
+        self.y_axis_rot = np.array(
+            [
+                [np.cos(theta), 0, np.sin(theta)],
+                [0, 1, 0],
+                [-np.sin(theta), 0, np.cos(theta)],
+            ]
+        )
+        self.z_axis_rot = np.array(
+            [
+                [np.cos(theta), -np.sin(theta), 0],
+                [np.sin(theta), np.cos(theta), 0],
+                [0, 0, 1],
+            ]
+        )
+        self.x_unit = np.array([1, 0, 0])
+        self.y_unit = np.array([0, 1, 0])
+        self.z_unit = np.array([0, 0, 1])
+
     def depth_image_cb(self, data):
         # store the latest depth image for processing
         try:
@@ -113,23 +133,8 @@ class PoseEstimation:
                     image = cv2.cvtColor(self.rgb_img, cv2.COLOR_BGR2RGB)
                     results = pose.process(image)
                     landmarks_list = results.pose_landmarks.landmark
-                    landmarks = self.pose_estimate_body(landmarks_list)
-                    rospy.loginfo(f"Landmarks {landmarks}")
-
-                    # process landmarks a bit
-                    self.point_viz_pub.publish(
-                        landmarks[Landmarks.RIGHT_SHOULDER.value]["point"]
-                    )
-                    self.point_viz_pub.publish(
-                        landmarks[Landmarks.LEFT_SHOULDER.value]["point"]
-                    )
-                    self.point_viz_pub.publish(
-                        landmarks[Landmarks.RIGHT_HIP.value]["point"]
-                    )
-                    self.point_viz_pub.publish(
-                        landmarks[Landmarks.LEFT_HIP.value]["point"]
-                    )
-
+                    torso = self.pose_estimate_body(landmarks_list)
+                    rospy.loginfo(f"torso {torso}")
 
         except CvBridgeError as e:
             rospy.loginfo(e)
@@ -184,30 +189,33 @@ class PoseEstimation:
             landmarks[lm.value]["point"] = self.transform_point_cameralink(
                 self.landmark_to_3d(landmarks[lm.value]["point"])
             )
+
+        # process landmarks a bit
+        self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_SHOULDER.value]["point"])
+        self.point_viz_pub.publish(landmarks[Landmarks.LEFT_SHOULDER.value]["point"])
+        self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_HIP.value]["point"])
+        self.point_viz_pub.publish(landmarks[Landmarks.LEFT_HIP.value]["point"])
+
         # returns a dictionary of the landmarks, their info, and their 3D coordinate
-        unit_nrml_x = compute_unit_normal(landmarks)
-        unit_nrml_y = np.array(-unit_nrml_x[1], unit_nrml_x[0], unit_nrml_x[2])
-        unit_nrml_z = np.array(-unit_nrml_x[2], unit_nrml_x[1], unit_nrml_x[0])
+        unit_nrml_x = self.compute_unit_normal(landmarks)
+        unit_nrml_y = self.z_axis_rot.dot(unit_nrml_x)
+        unit_nrml_z = self.y_axis_rot.dot(unit_nrml_x)
 
-        position = est_torso_pt(landmarks)
+        position = self.est_torso_pt(landmarks).point
 
-        x_unit = np.array([1, 0, 0])
-        y_unit = np.array([0, 1, 0])
-        z_unit = np.array([0, 0, 1])
-
-        def compute_euler_ang(target_v, unit_v)
-            c = np.dot(target_v, unit_v)/np.linalg.norm(target_v)/np.linalg.norm(unit_v)
-            angle = np.arccos(np.clip(c, -1, 1))
-            return angle
-    
-        alpha = compute_euler_ang(unit_nrml_x, x_unit) 
-        beta = compute_euler_ang(unit_nrml_y, y_unit)
-        gamma = compute_euler_ang(unit_nrml_z, z_unit)
+        alpha = self.compute_euler_ang(unit_nrml_x, self.x_unit)
+        beta = self.compute_euler_ang(unit_nrml_y, self.y_unit)
+        gamma = self.compute_euler_ang(unit_nrml_z, self.z_unit)
 
         q = quaternion_from_euler(alpha, beta, gamma)
         torso_pose = [position.x, position.y, position.z, q.x, q.y, q.z, q.w]
 
-        return landmarks
+        return torso
+
+    def compute_euler_ang(self, target_v, unit_v):
+        c = np.dot(target_v, unit_v) / np.linalg.norm(target_v) / np.linalg.norm(unit_v)
+        angle = np.arccos(np.clip(c, -1, 1))
+        return angle
 
     def compute_unit_normal(self, landmarks):
         # takes in landmarks and finds unit normal of plane
@@ -246,11 +254,13 @@ class PoseEstimation:
         p3 = landmarks[Landmarks.RIGHT_HIP.value]["point"].point
         p4 = landmarks[Landmarks.LEFT_HIP.value]["point"].point
 
-        x = (p1.x + p2.x + p3.x + p4.x) / 4
-        y = (p1.y + p2.y + p3.y + p4.y) / 4
-        z = (p1.z + p2.z + p3.z + p4.z) / 4
+        torso_point_stamped = PointStamped()
+        torso_point_stamped.header.frame_id = point_stamped.header.frame_id
+        torso_point_stamped.point.x = (p1.x + p2.x + p3.x + p4.x) / 4
+        torso_point_stamped.point.y = (p1.y + p2.y + p3.y + p4.y) / 4
+        torso_point_stamped.point.z = (p1.z + p2.z + p3.z + p4.z) / 4
 
-        return 1
+        return torso_point_stamped
 
     def landmark_to_3d(self, point_stamped):
         # Compute the 3D coordinate of each pose. 3D values in mm
