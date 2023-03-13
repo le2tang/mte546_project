@@ -88,21 +88,6 @@ class PoseEstimation:
         )
 
         # Rotation matrices
-        self.theta = 90
-        self.y_axis_rot = np.array(
-            [
-                [np.cos(theta), 0, np.sin(theta)],
-                [0, 1, 0],
-                [-np.sin(theta), 0, np.cos(theta)],
-            ]
-        )
-        self.z_axis_rot = np.array(
-            [
-                [np.cos(theta), -np.sin(theta), 0],
-                [np.sin(theta), np.cos(theta), 0],
-                [0, 0, 1],
-            ]
-        )
         self.x_unit = np.array([1, 0, 0])
         self.y_unit = np.array([0, 1, 0])
         self.z_unit = np.array([0, 0, 1])
@@ -172,7 +157,7 @@ class PoseEstimation:
             if landmark_data.visibility < self.landmark_vis_thresh:
                 return
 
-            lm_point = PontStamped()
+            lm_point = PointStamped()
             lm_point.header.frame_id = self.depth_optical_link_frame
             lm_point.point.x = landmark_data.x
             lm_point.point.y = landmark_data.y
@@ -193,24 +178,29 @@ class PoseEstimation:
         # process landmarks a bit
         self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_SHOULDER.value]["point"])
         self.point_viz_pub.publish(landmarks[Landmarks.LEFT_SHOULDER.value]["point"])
+        self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_EYE.value]["point"])
         self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_HIP.value]["point"])
         self.point_viz_pub.publish(landmarks[Landmarks.LEFT_HIP.value]["point"])
 
         # returns a dictionary of the landmarks, their info, and their 3D coordinate
         unit_nrml_x = self.compute_unit_normal(landmarks)
-        unit_nrml_y = self.z_axis_rot.dot(unit_nrml_x)
-        unit_nrml_z = self.y_axis_rot.dot(unit_nrml_x)
+        unit_nrml_y = np.array([-unit_nrml_x[1], unit_nrml_x[0], 0])
+        unit_nrml_z = np.cross(unit_nrml_x, unit_nrml_y)
 
-        position = self.est_torso_pt(landmarks).point
+        rospy.loginfo(f"x {unit_nrml_x} y {unit_nrml_y} z {unit_nrml_z}")
+        rospy.loginfo(f"xy_dot {np.dot(unit_nrml_x,unit_nrml_y)}")
+        rospy.loginfo(f"xz_dot {np.dot(unit_nrml_x,unit_nrml_z)}")
+        rospy.loginfo(f"yz_dot {np.dot(unit_nrml_y,unit_nrml_z)}")
 
         alpha = self.compute_euler_ang(unit_nrml_x, self.x_unit)
         beta = self.compute_euler_ang(unit_nrml_y, self.y_unit)
         gamma = self.compute_euler_ang(unit_nrml_z, self.z_unit)
 
+        position = self.est_torso_pt(landmarks).point
         q = quaternion_from_euler(alpha, beta, gamma)
         torso_pose = [position.x, position.y, position.z, q.x, q.y, q.z, q.w]
 
-        return torso
+        return torso_pose
 
     def compute_euler_ang(self, target_v, unit_v):
         c = np.dot(target_v, unit_v) / np.linalg.norm(target_v) / np.linalg.norm(unit_v)
