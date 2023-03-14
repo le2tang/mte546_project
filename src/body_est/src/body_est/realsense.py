@@ -63,8 +63,8 @@ class PoseEstimation:
         self.lm_body = [
             Landmarks.RIGHT_SHOULDER,
             Landmarks.LEFT_SHOULDER,
-            #            Landmarks.RIGHT_HIP,
-            #            Landmarks.LEFT_HIP,
+            Landmarks.RIGHT_HIP,
+            Landmarks.LEFT_HIP,
         ]
 
         # TODO need to set a threshold to determine if joint is visible
@@ -178,7 +178,6 @@ class PoseEstimation:
         # process landmarks a bit
         self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_SHOULDER.value]["point"])
         self.point_viz_pub.publish(landmarks[Landmarks.LEFT_SHOULDER.value]["point"])
-        self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_EYE.value]["point"])
         self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_HIP.value]["point"])
         self.point_viz_pub.publish(landmarks[Landmarks.LEFT_HIP.value]["point"])
 
@@ -196,9 +195,13 @@ class PoseEstimation:
         beta = self.compute_euler_ang(unit_nrml_y, self.y_unit)
         gamma = self.compute_euler_ang(unit_nrml_z, self.z_unit)
 
-        position = self.est_torso_pt(landmarks).point
-        q = quaternion_from_euler(alpha, beta, gamma)
-        torso_pose = [position.x, position.y, position.z, q.x, q.y, q.z, q.w]
+        torso_pt_stamped = self.est_torso_pt(landmarks)
+        self.point_viz_pub.publish(torso_pt_stamped)
+        position = torso_pt_stamped.point
+        rospy.loginfo(f"{position}")
+        q = quaternion_from_euler(alpha, beta, gamma)  # returns array of x,y,z,w
+        rospy.loginfo(f"{q}")
+        torso_pose = [position.x, position.y, position.z, q[0], q[1], q[2], q[3]]
 
         return torso_pose
 
@@ -245,7 +248,9 @@ class PoseEstimation:
         p4 = landmarks[Landmarks.LEFT_HIP.value]["point"].point
 
         torso_point_stamped = PointStamped()
-        torso_point_stamped.header.frame_id = point_stamped.header.frame_id
+        torso_point_stamped.header.frame_id = landmarks[Landmarks.LEFT_SHOULDER.value][
+            "point"
+        ].header.frame_id
         torso_point_stamped.point.x = (p1.x + p2.x + p3.x + p4.x) / 4
         torso_point_stamped.point.y = (p1.y + p2.y + p3.y + p4.y) / 4
         torso_point_stamped.point.z = (p1.z + p2.z + p3.z + p4.z) / 4
