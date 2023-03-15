@@ -207,7 +207,7 @@ class PoseEstimation:
 
     def compute_euler_ang(self, target_v, unit_v):
         c = np.dot(target_v, unit_v) / np.linalg.norm(target_v) / np.linalg.norm(unit_v)
-        angle = np.arccos(np.clip(c, -1, 1))
+        angle = np.arccos(c)
         return angle
 
     def compute_unit_normal(self, landmarks):
