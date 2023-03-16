@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 import rospy
-import tf2
+import numpy as np
+import tf2_ros
 import tf_conversions
 
 from actionlib import SimpleActionClient
@@ -35,15 +36,40 @@ class ViconInterface:
 
 
 class RealsenseInterface:
-    def __init__(self):
-        self.client = ServiceProxy()
-        rospy.wait_for_service("")
+    CAMERA_NAME = "/realsense/camera"
+    BODY_NAME = "/realsense/body"
 
-    def get_body_pose(self):
+    def __init__(self):
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+
+    def get_cam_to_body(self):
         try:
-            self.client()
-        except:
-            pass
+            return self.tf_buffer.lookup_transform(
+                self.CAMERA_NAME, self.BODY_NAME, rospy.Time()
+            )
+        except (
+            tf2_ros.LookupException,
+            tf2_ros.ConnectivityException,
+            tf2_ros.ExtrapolationException,
+        ) as e:
+            rospy.logerr(
+                f"Transform lookup from {self.CAMERA_NAME} to {self.BODY_NAME} failed:\n{e}"
+            )
+            return None
+
+    def format_tf(self, body_tf):
+        return np.array(
+            [
+                body_tf.translation.x,
+                body_tf.translation.y,
+                body_tf.translation.z,
+                body_tf.orientation.x,
+                body_tf.orientation.y,
+                body_tf.orientation.z,
+                body_tf.orientation.w,
+            ]
+        )
 
 
 class EKFInterface:
@@ -86,8 +112,49 @@ class BodyPoseNode:
         self.vicon = ViconInterface()
         self.tf_broadcaster = tf2.TransformBroadcaster()
 
+    def get_error(self, ref_tf, link_tf):
+        error_tf = Transform()
+
+        error_tf.translation.x = link_tf.translation.x - ref_tf.translation.x
+        error_tf.translation.y = link_tf.translation.y - ref_tf.translation.y
+        error_tf.translation.z = link_tf.translation.z - ref_tf.translation.z
+
+        ref_rot_mat = tf_conversions.transformations.quaternion_matrix(
+            [
+                ref_tf.orientation.x,
+                ref_tf.orientation.y,
+                ref_tf.orientation.z,
+                ref_tf.orientation.z,
+            ]
+        )
+        link_rot_mat = tf_conversions.transformations.quaternion_matrix(
+            [
+                link_tf.orientation.x,
+                link_tf.orientation.y,
+                link_tf.orientation.z,
+                link_tf.orientation.z,
+            ]
+        )
+
+        error_rot_mat = link_rot_mat @ ref_rot_mat.T
+        error_quat = tf_conversions.transformations.quaternion_from_matrix(
+            error_rot_mat
+        )
+        error_quat /= np.sqrt(np.sum(np.square(error_quat)))
+
+        error_tf.orientation.x = error_quat[0]
+        error_tf.orientation.y = error_quat[1]
+        error_tf.orientation.z = error_quat[2]
+        error_tf.orientation.w = error_quat[3]
+
+        rot_angle = 2 * np.arccos(error_quat[3])
+        rot_axis = error_quat[:3] / np.sqrt(1 - error_quat[3] * error_quat[3])
+
+        return error_tf, (rot_angle, rot_axis)
+
     def run(self):
-        measurement = self.realsense.get_body_pose()
+        body_tf = self.realsense.get_body_pose()
+        measurement = self.realsense.format_tf(body_tf)
 
         self.ekf.update(measurement)
 
@@ -98,21 +165,13 @@ class BodyPoseNode:
         estimate_tf.transform = self.ekf.get_transform()
 
         # Broadcast Transform from EKF prediction
-        self.tf_broadcaster.sendTransform(stamped_tf)
+        self.tf_broadcaster.sendTransform(estimate_tf)
 
-        self.compare(self, estimate_tf)
-
-    def compare(self, estimate_tf):
         ground_tf = self.vicon.get_cam_to_body()
 
-        position_error = np.array(
-            [
-                ground_tf.transform.position.x - estimate_tf.transform.position.x,
-                ground_tf.transform.position.y - estimate_tf.transform.position.y,
-                ground_tf.transform.position.z - estimate_tf.transform.position.z,
-            ]
+        error_tf, (rot_axis, rot_angle) = self.get_error(
+            ground_tf, estimate_tf.transform
         )
-        position_distance = np.sqrt(np.sum(np.square(position_error)))
 
 
 if __name__ == "__main__":
