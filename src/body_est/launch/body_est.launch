@@ -2,4 +2,5 @@
 <launch>
   <!-- launch the pose stimation node -->
 	<node name="body_est" pkg="body_est" type="realsense.py" output="screen"/>
+  <node name="main" pkg="body_est" type="main.py" output="screen"/>
 </launch>
