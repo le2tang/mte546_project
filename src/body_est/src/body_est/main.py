@@ -5,8 +5,8 @@ import numpy as np
 import tf2_ros
 import tf_conversions
 
-from geometry_msgs.msg import Transform, StampedTransform
-from body_ekf import EKF
+from geometry_msgs.msg import Transform, TransformStamped
+from body_est.ekf import EKF
 
 
 class ViconInterface:
@@ -68,12 +68,12 @@ class BodyPoseNode:
     def __init__(self):
         rospy.init_node("body_pose_node")
 
-        self.realsense_sub = rospy.Subscriber("torso_tf", StampedTransform, self.update)
+        self.realsense_sub = rospy.Subscriber("torso_tf", TransformStamped, self.update)
 
         self.ekf = EKFInterface()
 
         self.vicon = ViconInterface()
-        self.tf_broadcaster = tf2.TransformBroadcaster()
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster()
 
     def get_error(self, ref_tf, link_tf):
         error_tf = Transform()
@@ -120,7 +120,7 @@ class BodyPoseNode:
 
         self.ekf.update(measurement)
 
-        estimate_tf = StampedTransform()
+        estimate_tf = TransformStamped()
         estimate_tf.header.stamp = rospy.Time.now()
         estimate_tf.header.frame_id = "/bodypose/camera"
         estimate_tf.child_frame_id = "/bodypose/body"
