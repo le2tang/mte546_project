@@ -99,10 +99,10 @@ class BodyPoseNode:
 
         ref_rot_mat = tf_conversions.transformations.quaternion_matrix(
             [
-                ref_tf.orientation.x,
-                ref_tf.orientation.y,
-                ref_tf.orientation.z,
-                ref_tf.orientation.z,
+                ref_tf.rotation.x,
+                ref_tf.rotation.y,
+                ref_tf.rotation.z,
+                ref_tf.rotation.z,
             ]
         )
         link_rot_mat = tf_conversions.transformations.quaternion_matrix(
