@@ -5,7 +5,6 @@ import numpy as np
 import tf2_ros
 import tf_conversions
 
-from actionlib import SimpleActionClient
 from geometry_msgs.msg import Transform, StampedTransform
 from body_ekf import EKF
 
@@ -33,43 +32,6 @@ class ViconInterface:
                 f"Transform lookup from {self.CAMERA_NAME} to {self.BODY_NAME} failed:\n{e}"
             )
             return None
-
-
-class RealsenseInterface:
-    CAMERA_NAME = "/realsense/camera"
-    BODY_NAME = "/realsense/body"
-
-    def __init__(self):
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
-
-    def get_cam_to_body(self):
-        try:
-            return self.tf_buffer.lookup_transform(
-                self.CAMERA_NAME, self.BODY_NAME, rospy.Time()
-            )
-        except (
-            tf2_ros.LookupException,
-            tf2_ros.ConnectivityException,
-            tf2_ros.ExtrapolationException,
-        ) as e:
-            rospy.logerr(
-                f"Transform lookup from {self.CAMERA_NAME} to {self.BODY_NAME} failed:\n{e}"
-            )
-            return None
-
-    def format_tf(self, body_tf):
-        return np.array(
-            [
-                body_tf.translation.x,
-                body_tf.translation.y,
-                body_tf.translation.z,
-                body_tf.orientation.x,
-                body_tf.orientation.y,
-                body_tf.orientation.z,
-                body_tf.orientation.w,
-            ]
-        )
 
 
 class EKFInterface:
@@ -106,8 +68,9 @@ class BodyPoseNode:
     def __init__(self):
         rospy.init_node("body_pose_node")
 
+        self.realsense_sub = rospy.Subscriber("torso_tf", StampedTransform, self.update)
+
         self.ekf = EKFInterface()
-        self.realsense = RealsenseInterface()
 
         self.vicon = ViconInterface()
         self.tf_broadcaster = tf2.TransformBroadcaster()
@@ -152,9 +115,8 @@ class BodyPoseNode:
 
         return error_tf, (rot_angle, rot_axis)
 
-    def run(self):
-        body_tf = self.realsense.get_body_pose()
-        measurement = self.realsense.format_tf(body_tf)
+    def update(self, msg):
+        measurement = self.realsense.format_tf(msg.trasform)
 
         self.ekf.update(measurement)
 
