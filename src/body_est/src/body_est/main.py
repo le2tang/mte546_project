@@ -40,17 +40,18 @@ class EKFInterface:
         self.ekf = EKF(PoseModel())
 
     def get_position(self):
-        return self.ekf.state[:3]
+        return self.ekf.state[:3].flatten()
 
     def get_orientation(self):
         # Return quaternion as [x y z w]
-        return self.ekf.state[6:10] / np.sqrt(np.sum(np.square(self.ekf.state[6:10])))
+        return (self.ekf.state[6:10] / np.sqrt(np.sum(np.square(self.ekf.state[6:10])))).flatten()
 
     def get_transform(self):
         position = self.get_position()
         orientation = self.get_orientation()
 
         tf = Transform()
+        rospy.loginfo(f"position {position}")
         tf.translation.x = position[0]
         tf.translation.y = position[1]
         tf.translation.z = position[2]
@@ -77,6 +78,7 @@ class BodyPoseNode:
 
         self.vicon = ViconInterface()
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
+        self.dist_error_threshold = 0.1
 
     def get_error(self, ref_tf, link_tf):
         error_tf = Transform()
@@ -102,15 +104,15 @@ class BodyPoseNode:
                 ref_tf.rotation.x,
                 ref_tf.rotation.y,
                 ref_tf.rotation.z,
-                ref_tf.rotation.z,
+                ref_tf.rotation.w,
             ]
         )
         link_rot_mat = tf_conversions.transformations.quaternion_matrix(
             [
-                link_tf.orientation.x,
-                link_tf.orientation.y,
-                link_tf.orientation.z,
-                link_tf.orientation.z,
+                link_tf.rotation.x,
+                link_tf.rotation.y,
+                link_tf.rotation.z,
+                link_tf.rotation.w,
             ]
         )
 
@@ -120,10 +122,10 @@ class BodyPoseNode:
         )
         error_quat /= np.sqrt(np.sum(np.square(error_quat)))
 
-        error_tf.orientation.x = error_quat[0]
-        error_tf.orientation.y = error_quat[1]
-        error_tf.orientation.z = error_quat[2]
-        error_tf.orientation.w = error_quat[3]
+        error_tf.rotation.x = error_quat[0]
+        error_tf.rotation.y = error_quat[1]
+        error_tf.rotation.z = error_quat[2]
+        error_tf.rotation.w = error_quat[3]
 
         rot_angle = 2 * np.arccos(error_quat[3])
         rot_axis = error_quat[:3] / np.sqrt(1 - error_quat[3] * error_quat[3])
