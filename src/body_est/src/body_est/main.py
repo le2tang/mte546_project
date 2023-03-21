@@ -7,6 +7,7 @@ import tf_conversions
 
 from geometry_msgs.msg import Transform, TransformStamped
 from body_est.ekf import EKF
+from body_est.model_equations import PoseModel
 
 
 class ViconInterface:
@@ -36,7 +37,7 @@ class ViconInterface:
 
 class EKFInterface:
     def __init__(self):
-        self.ekf = EKF()
+        self.ekf = EKF(PoseModel())
 
     def get_position(self):
         return self.ekf.state[:3]
@@ -116,24 +117,31 @@ class BodyPoseNode:
         return error_tf, (rot_angle, rot_axis)
 
     def update(self, msg):
-        measurement = self.realsense.format_tf(msg.trasform)
+        measurement = np.array([
+            msg.transform.translation.x,
+            msg.transform.translation.y,
+            msg.transform.translation.z,
+            msg.transform.rotation.x,
+            msg.transform.rotation.y,
+            msg.transform.rotation.z,
+            msg.transform.rotation.w])
 
         self.ekf.update(measurement)
 
         estimate_tf = TransformStamped()
         estimate_tf.header.stamp = rospy.Time.now()
-        estimate_tf.header.frame_id = "/bodypose/camera"
-        estimate_tf.child_frame_id = "/bodypose/body"
+        estimate_tf.header.frame_id = "camera_link"
+        estimate_tf.child_frame_id = "body_est/body"
         estimate_tf.transform = self.ekf.get_transform()
 
         # Broadcast Transform from EKF prediction
         self.tf_broadcaster.sendTransform(estimate_tf)
 
-        ground_tf = self.vicon.get_cam_to_body()
+        #ground_tf = self.vicon.get_cam_to_body()
 
-        error_tf, (rot_axis, rot_angle) = self.get_error(
-            ground_tf, estimate_tf.transform
-        )
+        #error_tf, (rot_axis, rot_angle) = self.get_error(
+        #    ground_tf, estimate_tf.transform
+        #)
 
 
 if __name__ == "__main__":
