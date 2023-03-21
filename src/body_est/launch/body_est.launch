@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- launch the pose stimation node -->
+	<node name="body_est" pkg="body_est" type="realsense.py" output="screen"/>
+</launch>

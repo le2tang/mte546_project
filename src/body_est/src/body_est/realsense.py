@@ -2,7 +2,11 @@ import rospy
 from actionlib import SimpleActionServer
 
 from tf2_geometry_msgs import PointStamped
+import tf2_msgs.msg
+from geometry_msgs.msg import TransformStamped, PolygonStamped, Polygon
+from tf.transformations import quaternion_from_euler
 import tf2_ros
+from std_msgs.msg import Int32
 
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge, CvBridgeError
@@ -38,23 +42,15 @@ class Landmarks(Enum):
 class PoseEstimation:
     def __init__(self):
         self.logger_name = "pose_estimation"
-        rospy.init_node("pose_estimation_server", anonymous=True)
+        rospy.init_node("body_est", anonymous=True)
         rospy.loginfo(
             "Starting the Perception pose estimation node",
             logger_name=self.logger_name,
         )
+        self.got_new_depth = False
+        self.got_intrinsics = False
 
-        # Action
-        self.pose_estimation_server = SimpleActionServer(
-            "/pose_estimation",
-            PoseEstimationAction,
-            self.execute_cb,
-            False,
-        )
-        self.pose_estimation_server.start()
-        self.result = PoseEstimationResult()
-
-        # Rviz visualization
+        # Rviz visualization and published topic
         self.point_viz_topic = "/point_viz"
         self.point_viz_pub = rospy.Publisher(
             self.point_viz_topic, PointStamped, queue_size=10
@@ -63,22 +59,17 @@ class PoseEstimation:
         # transforms
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
-        self.ref_link = "base_link"
+        self.ref_link = "camera_link"
         self.depth_optical_link_frame = "optical_depth_link_frame"
 
         # landmarks
         self.lm_body = [
             Landmarks.RIGHT_SHOULDER,
             Landmarks.LEFT_SHOULDER,
-            Landmarks.RIGHT_EYE,
+            Landmarks.RIGHT_HIP,
+            Landmarks.LEFT_HIP,
         ]
-        self.lm_face = [
-            Landmarks.LEFT_EYE,
-            Landmarks.MOUTH_RIGHT,
-            Landmarks.NOSE,
-            Landmarks.MOUTH_LEFT,
-            Landmarks.MOUTH_RIGHT,
-        ]
+
         # TODO need to set a threshold to determine if joint is visible
         self.landmark_vis_thresh = 0.9
 
@@ -88,10 +79,10 @@ class PoseEstimation:
         self.rgb_img = None
         self.camera_intrinsics = rs.intrinsics()
         self.MM_TO_M = 1 / 1000
-
-        self.get_camera_info()
+        time.sleep(1.5)
 
         # camera data subs
+        self.get_camera_info()
         self.depth_sub = rospy.Subscriber(
             "camera/aligned_depth_to_color/image_raw", Image, self.depth_image_cb
         )
@@ -99,10 +90,31 @@ class PoseEstimation:
             "camera/color/image_raw", Image, self.rgb_image_cb
         )
 
+        # Rotation matrices
+        self.x_unit = np.array([1, 0, 0])
+        self.y_unit = np.array([0, 1, 0])
+        self.z_unit = np.array([0, 0, 1])
+
+        # transform pub
+        self.torso_tf_pub = rospy.Publisher("/tf", tf2_msgs.msg.TFMessage, queue_size=1)
+        self.torso_only_tf_pub = rospy.Publisher(
+            "torso_tf", TransformStamped, queue_size=1
+        )
+
+        # polygon pub
+        self.torso_plane_pub = rospy.Publisher(
+            "/torso_plane", PolygonStamped, queue_size=1
+        )
+
+        # new iteration pub
+        self.pose_updated_pub = rospy.Publisher("/pose_updated", Int32, queue_size=1)
+        self.updates_counter = 0
+
     def depth_image_cb(self, data):
         # store the latest depth image for processing
         try:
             self.depth_img = self.cv_bridge.imgmsg_to_cv2(data, "16UC1")
+            self.got_new_depth = True
         except CvBridgeError as e:
             rospy.loginfo(e)
 
@@ -110,6 +122,44 @@ class PoseEstimation:
         # store the latest color image for processing
         try:
             self.rgb_img = self.cv_bridge.imgmsg_to_cv2(data, "bgr8")
+            # only execute when have updated instrinsics, depth, and rgb
+            if self.got_new_depth == True and self.got_intrinsics == True:
+                # set updated depth to be false to wait until new depth and rgb
+                self.got_new_depth = False
+                with mp.solutions.pose.Pose(
+                    static_image_mode=True,
+                    model_complexity=2,
+                    enable_segmentation=True,
+                    min_detection_confidence=0.5,
+                ) as pose:
+                    self.rgb_img.flags.writeable = False
+                    image = cv2.cvtColor(self.rgb_img, cv2.COLOR_BGR2RGB)
+                    results = pose.process(image)
+                    landmarks_list = results.pose_landmarks.landmark
+                    torso = self.pose_estimate_body(landmarks_list)
+                    rospy.loginfo(f"torso {torso}")
+
+                    t = TransformStamped()
+                    t.header.frame_id = "/camera_link"
+                    t.header.stamp = rospy.Time.now()
+                    t.child_frame_id = "torso"
+                    t.transform.translation.x = torso[0]
+                    t.transform.translation.y = torso[1]
+                    t.transform.translation.z = torso[2]
+                    t.transform.rotation.x = torso[3]
+                    t.transform.rotation.y = torso[4]
+                    t.transform.rotation.z = torso[5]
+                    t.transform.rotation.w = torso[6]
+                    tfm = tf2_msgs.msg.TFMessage([t])
+                    self.torso_tf_pub.publish(tfm)
+                    self.torso_only_tf_pub.publish(t)
+
+                    # update topic to signal that count has incremented
+                    self.updates_counter = self.updates_counter + 1
+                    counter_msg = Int32()
+                    counter_msg.data = self.updates_counter
+                    self.pose_updated_pub.publish(self.updates_counter)
+
         except CvBridgeError as e:
             rospy.loginfo(e)
 
@@ -132,62 +182,7 @@ class PoseEstimation:
         self.camera_intrinsics.width = info.width
         self.camera_intrinsics.height = info.height
         rospy.loginfo(f"Got camera intrinsics {self.camera_intrinsics}")
-
-    def execute_cb(self, goal):
-        rospy.loginfo(f"Recieved target {goal.target}. Beginning pose estimation")
-
-        with mp.solutions.pose.Pose(
-            static_image_mode=True,
-            model_complexity=2,
-            enable_segmentation=True,
-            min_detection_confidence=0.5,
-        ) as pose:
-            self.rgb_img.flags.writeable = False
-            image = cv2.cvtColor(self.rgb_img, cv2.COLOR_BGR2RGB)
-            results = pose.process(image)
-            landmarks_list = results.pose_landmarks.landmark
-
-            if goal.target == "body":
-                self.pose_estimate_body(landmarks_list)
-                self.pose_estimation_server.set_succeeded(self.result)
-            elif goal.target == "head":
-                rospy.loginfo(f"Head not implemented")
-                self.result.pose_est_fail = 2
-                self.pose_estimation_server.set_aborted(self.result)
-                return
-            else:
-                rospy.loginfo(f"Need valid target")
-                self.result.pose_est_fail = 3
-                self.pose_estimation_server.set_aborted(self.result)
-
-    def preempt_cb(self):
-        pass
-
-    def pose_estimate_head(self, landmarks_list):
-        # get landmarks of eyes and mouth
-        # average the landmarks positions
-        # return that point
-
-        average_head_point = PointStamped()
-        n_ignored_pts = 0
-        for lm in self.lm_face:
-            landmark_data = landmarks_list[lm.value]
-            if landmark_data.visibility > self.landmark_vis_thresh:
-                average_head_point.header.frame_id = self.depth_optical_link_frame
-                average_head_point.point.x += landmark_data.x
-                average_head_point.point.y += landmark_data.y
-                average_head_point.point.z += landmark_data.z
-            else:
-                rospy.loginfo(f"Ignored point {lm}")
-                n_ignored_pts += 1
-
-        n_points = len(self.lm_face) - n_ignored_pts
-        average_head_point.point.x /= n_points
-        average_head_point.point.y /= n_points
-        average_head_point.point.z /= n_points
-
-        rospy.loginfo(f"{average_head_point}")
-        return average_head_point
+        self.got_intrinsics = True
 
     def pose_estimate_body(self, landmarks_list):
         # dict {'landmark_id': {'mp_landmark': landmark, 'point': PointStamped}}
@@ -215,63 +210,125 @@ class PoseEstimation:
         # get landmarks coords
         for lm in self.lm_body:
             # transform landmark to 3D pose and transform coords to base link
-            landmarks[lm.value]["point"] = self.transform_point_baselink(
+            landmarks[lm.value]["point"] = self.transform_point_cameralink(
                 self.landmark_to_3d(landmarks[lm.value]["point"])
             )
-            # visualize points in Rviz
-            self.point_viz_pub.publish(landmarks[lm.value]["point"])
 
-        # rospy.loginfo(f"Transformed {landmarks}")
+        # process landmarks a bit
+        self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_SHOULDER.value]["point"])
+        self.point_viz_pub.publish(landmarks[Landmarks.LEFT_SHOULDER.value]["point"])
+        self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_HIP.value]["point"])
+        self.point_viz_pub.publish(landmarks[Landmarks.LEFT_HIP.value]["point"])
 
-    def compute_unit_normal(self, landmarks, align_vertical=False):
+        torso_plane = PolygonStamped()
+        torso_plane.header.frame_id = "/camera_link"
+        torso_plane.header.stamp = rospy.Time.now()
+
+        # move points forward to see easier
+        right_shoulder_point = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
+        left_shoulder_point = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
+        right_hip_point = landmarks[Landmarks.RIGHT_HIP.value]["point"].point
+        left_hip_point = landmarks[Landmarks.LEFT_HIP.value]["point"].point
+
+        right_shoulder_point.x = right_shoulder_point.x - 0.2
+        left_shoulder_point.x = left_shoulder_point.x - 0.2
+        right_hip_point.x = right_hip_point.x - 0.2
+        left_hip_point.x = left_hip_point.x - 0.2
+
+        torso_plane.polygon.points.append(right_shoulder_point)
+        torso_plane.polygon.points.append(left_shoulder_point)
+        torso_plane.polygon.points.append(left_hip_point)
+        torso_plane.polygon.points.append(right_hip_point)
+        self.torso_plane_pub.publish(torso_plane)
+
+        torso_pt_stamped = self.est_torso_pt(landmarks)
+        self.point_viz_pub.publish(torso_pt_stamped)
+        torso_point = torso_pt_stamped.point
+        rospy.loginfo(f"{torso_point}")
+
+        # returns a dictionary of the landmarks, their info, and their 3D coordinate
+        unit_nrml_x = self.compute_unit_normal(landmarks, torso_point)
+        unit_nrml_y = np.array([-unit_nrml_x[1], unit_nrml_x[0], 0])
+        unit_nrml_z = np.cross(unit_nrml_x, unit_nrml_y)
+
+        # rospy.loginfo(f"x {unit_nrml_x} y {unit_nrml_y} z {unit_nrml_z}")
+        # rospy.loginfo(f"xy_dot {np.dot(unit_nrml_x,unit_nrml_y)}")
+        # rospy.loginfo(f"xz_dot {np.dot(unit_nrml_x,unit_nrml_z)}")
+        # rospy.loginfo(f"yz_dot {np.dot(unit_nrml_y,unit_nrml_z)}")
+
+        alpha = self.compute_euler_ang(unit_nrml_x, self.x_unit)
+        beta = self.compute_euler_ang(unit_nrml_y, self.y_unit)
+        gamma = self.compute_euler_ang(unit_nrml_z, self.z_unit)
+        rospy.loginfo(
+            f"alpha {np.degrees(alpha)} beta {np.degrees(beta)} gamma {np.degrees(gamma)}"
+        )
+
+        q = quaternion_from_euler(alpha, beta, gamma)  # returns array of x,y,z,w
+        rospy.loginfo(f"{q}")
+        torso_pose = [
+            torso_point.x,
+            torso_point.y,
+            torso_point.z,
+            q[0],
+            q[1],
+            q[2],
+            q[3],
+        ]
+
+        return torso_pose
+
+    def compute_euler_ang(self, target_v, unit_v):
+        c = np.dot(target_v, unit_v) / np.linalg.norm(target_v) / np.linalg.norm(unit_v)
+        angle = np.arccos(c)
+        return angle
+
+    def compute_unit_normal(self, landmarks, torso_point):
         # takes in landmarks and finds unit normal of plane
         # second point is the center point for the vectors
         # to be "crossed" upon
-        p1 = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
-        p2 = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
-        p3 = landmarks[Landmarks.RIGHT_EYE.value]["point"].point
+        p_rhip = landmarks[Landmarks.RIGHT_HIP.value]["point"].point
+        p_lhip = landmarks[Landmarks.LEFT_HIP.value]["point"].point
+        p_rsh = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
+        p_lsh = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
 
         vector_1 = np.array(
             [
-                p1.x - p2.x,
-                p1.y - p2.y,
-                p1.z - p2.z,
+                p_lsh.x - torso_point.x,
+                p_lsh.y - torso_point.y,
+                p_lsh.z - torso_point.z,
             ]
         )
-
-        # rospy.loginfo(f"Align vertical {align_vertical}")
-        vector_2 = None
-        if align_vertical == True:
-            # place point directly vertical in Z direction to constrain the plane
-            # to be vertical. using shoulders and a synthetic vertical point
-            forced_v_point = copy.deepcopy(
-                landmarks[Landmarks.RIGHT_SHOULDER.value]["point"]
-            )
-            forced_v_point.point.z += 0.2  # add arbitrary value to get a vertical plane
-            rospy.loginfo(f"Forced point {forced_v_point}")
-            self.point_viz_pub.publish(forced_v_point)
-
-            vector_2 = np.array(
-                [
-                    forced_v_point.point.x - p2.x,
-                    forced_v_point.point.y - p2.y,
-                    forced_v_point.point.z - p2.z,
-                ]
-            )
-        else:
-            # using another landmark
-            vector_2 = np.array(
-                [
-                    p3.x - p2.x,
-                    p3.y - p2.y,
-                    p3.z - p2.z,
-                ]
-            )
+        # using another landmark
+        vector_2 = np.array(
+            [
+                p_rsh.x - torso_point.x,
+                p_rsh.y - torso_point.y,
+                p_rsh.z - torso_point.z,
+            ]
+        )
 
         # might need to check direction is no into bed
         plane_normal = np.cross(vector_1, vector_2)
         plane_unit_normal = plane_normal / np.linalg.norm(plane_normal)
         return plane_unit_normal
+
+    def est_torso_pt(self, landmarks):
+        # take in 3-4 points, use vectors to find the axes
+        # average xyz values to get a point
+        p1 = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
+        p2 = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
+        p3 = landmarks[Landmarks.RIGHT_HIP.value]["point"].point
+        p4 = landmarks[Landmarks.LEFT_HIP.value]["point"].point
+
+        torso_point_stamped = PointStamped()
+        torso_point_stamped.header.frame_id = landmarks[Landmarks.LEFT_SHOULDER.value][
+            "point"
+        ].header.frame_id
+        torso_point_stamped.point.x = (p1.x + p2.x + p3.x + p4.x) / 4
+        torso_point_stamped.point.y = (p1.y + p2.y + p3.y + p4.y) / 4
+        torso_point_stamped.point.z = (p1.z + p2.z + p3.z + p4.z) / 4
+
+        return torso_point_stamped
 
     def landmark_to_3d(self, point_stamped):
         # Compute the 3D coordinate of each pose. 3D values in mm
@@ -295,7 +352,9 @@ class PoseEstimation:
 
         return new_point_stamped
 
-    def transform_point_baselink(self, point_stamped):
+    def transform_point_cameralink(self, point_stamped):
+        # transforms from the optical lens to the camera link
+        # flips point into more reasonable coordinate frame
         while not rospy.is_shutdown():
             try:
                 # rospy.loginfo(f"point before {point_stamped}")
