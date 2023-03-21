@@ -48,6 +48,41 @@ class PoseModel:
 
         return H
 
+    def init_state(self):
+        state = np.zeros((13, 1))  # [p, v, q, w]
+        state[6] = 1
+        return state
+
+    def init_state_covar(self):
+        return np.eye(13)
+
+    def process_noise(self):
+        lin_vel_var = 0.1
+        ang_vel_var = np.square(np.deg2rad(10))
+
+        state_proc_var = np.array(
+            [
+                0,
+                0,
+                0,
+                lin_vel_var,
+                lin_vel_var,
+                lin_vel_var,
+                0,
+                0,
+                0,
+                0,
+                ang_vel_var,
+                ang_vel_var,
+                ang_vel_var,
+            ]
+        )
+        state_var_proj = self.forward_jacobian(state_proc_var)
+        return state_var_proj @ np.diagflat(state_proc_var) @ state_var_proj.T
+
+    def measurement_noise(self):
+        return np.diagflat([1, 1, 1, 2, 2, 2, 2])
+
     def _state_position(self, state):
         """Extract position from state vector"""
         return np.reshape(state[:3], (3, 1))
@@ -80,10 +115,10 @@ class PoseModel:
         w = w.ravel()
         return np.array(
             [
-                [0+ w[2] * q[2] -w[1] * q[2]+ w[0] * q[3]],
-                [-w[2] * q[0]+ 0+ w[0] * q[2]+ w[1] * q[3]],
-                [w[1] * q[0]-w[0] * q[1]+ 0+ w[2] * q[3]],
-                [-w[0] * q[0]+ -w[1] * q[1] -w[2] * q[2]+ 0],
+                [0 + w[2] * q[2] - w[1] * q[2] + w[0] * q[3]],
+                [-w[2] * q[0] + 0 + w[0] * q[2] + w[1] * q[3]],
+                [w[1] * q[0] - w[0] * q[1] + 0 + w[2] * q[3]],
+                [-w[0] * q[0] + -w[1] * q[1] - w[2] * q[2] + 0],
             ]
         )
 

@@ -11,9 +11,9 @@ from body_est.model_equations import PoseModel
 
 
 class ViconInterface:
-    TF_REF_NAME = "/vicon_world"
-    CAMERA_NAME = "/camera"
-    BODY_NAME = "/body"
+    TF_REF_NAME = "vicon_world"
+    CAMERA_NAME = "camera"
+    BODY_NAME = "body"
 
     def __init__(self):
         self.tf_buffer = tf2_ros.Buffer()
@@ -60,8 +60,10 @@ class EKFInterface:
         tf.rotation.w = orientation[3]
         return tf
 
-    def update(self, measurement):
+    def predict(self):
         self.ekf.predict()
+
+    def correct(self, measurement):
         self.ekf.correct(measurement)
 
 
@@ -82,6 +84,18 @@ class BodyPoseNode:
         error_tf.translation.x = link_tf.translation.x - ref_tf.translation.x
         error_tf.translation.y = link_tf.translation.y - ref_tf.translation.y
         error_tf.translation.z = link_tf.translation.z - ref_tf.translation.z
+
+        dist_error = np.sqrt(
+            np.sum(
+                np.square(
+                    [
+                        error_tf.translation.x,
+                        error_tf.translation.y,
+                        error_tf.translation.z,
+                    ]
+                )
+            )
+        )
 
         ref_rot_mat = tf_conversions.transformations.quaternion_matrix(
             [
@@ -114,20 +128,35 @@ class BodyPoseNode:
         rot_angle = 2 * np.arccos(error_quat[3])
         rot_axis = error_quat[:3] / np.sqrt(1 - error_quat[3] * error_quat[3])
 
-        return error_tf, (rot_angle, rot_axis)
+        return error_tf, dist_error, (rot_angle, rot_axis)
 
     def update(self, msg):
-        measurement = np.array([
-            msg.transform.translation.x,
-            msg.transform.translation.y,
-            msg.transform.translation.z,
-            msg.transform.rotation.x,
-            msg.transform.rotation.y,
-            msg.transform.rotation.z,
-            msg.transform.rotation.w])
+        # Get the a priori estimate of the current state
+        self.ekf.predict()
+        predict_tf = self.ekf.get_transform()
 
-        self.ekf.update(measurement)
+        # Compare the measurement to the prior estimate
+        error_tf, dist_error, (rot_axis, rot_angle) = self.get_error(
+            predict_tf, msg.transform
+        )
+        # Ignore the measurement if the difference is too large
+        if (dist_error < self.dist_error_threshold) and (
+            rot_angle < self.ang_error_threshold
+        ):
+            measurement = np.array(
+                [
+                    msg.transform.translation.x,
+                    msg.transform.translation.y,
+                    msg.transform.translation.z,
+                    msg.transform.rotation.x,
+                    msg.transform.rotation.y,
+                    msg.transform.rotation.z,
+                    msg.transform.rotation.w,
+                ]
+            )
+            self.ekf.correct(measurement)
 
+        # Report the posterior estimate transform
         estimate_tf = TransformStamped()
         estimate_tf.header.stamp = rospy.Time.now()
         estimate_tf.header.frame_id = "camera_link"
@@ -137,11 +166,11 @@ class BodyPoseNode:
         # Broadcast Transform from EKF prediction
         self.tf_broadcaster.sendTransform(estimate_tf)
 
-        #ground_tf = self.vicon.get_cam_to_body()
+        # ground_tf = self.vicon.get_cam_to_body()
 
-        #error_tf, (rot_axis, rot_angle) = self.get_error(
-        #    ground_tf, estimate_tf.transform
-        #)
+        # error_tf, (rot_axis, rot_angle) = self.get_error(
+        #    ground_tf, dist_error, estimate_tf.transform
+        # )
 
 
 if __name__ == "__main__":
