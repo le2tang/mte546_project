@@ -43,7 +43,7 @@ class EKFInterface:
 
     def get_orientation(self):
         # Return quaternion as [x y z w]
-        return self.ekf.state[6:10]
+        return self.ekf.state[6:10] / np.sqrt(np.sum(np.square(self.ekf.state[6:10])))
 
     def get_transform(self):
         position = self.get_position()
