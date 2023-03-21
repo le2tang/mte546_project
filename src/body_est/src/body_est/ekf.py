@@ -6,9 +6,10 @@ class EKF:
         self.model = model
 
         self.state = np.zeros((13, 1))  # [p, v, q, w]
+        self.state[7] = 1
         self.state_covar = np.eye(13)
-        self.process_noise = np.eye(13)
-        self.measurement_noise = np.eye(7) # does the number of states = number of measurements?
+        self.process_noise = np.eye(13) * 0.1
+        self.measurement_noise = np.diagflat([1, 1, 1, 2, 2, 2, 2])
 
     def predict(self):
         """Update prior state estimate and covariance"""

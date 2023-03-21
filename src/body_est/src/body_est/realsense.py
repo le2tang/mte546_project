@@ -4,7 +4,7 @@ from actionlib import SimpleActionServer
 from tf2_geometry_msgs import PointStamped
 import tf2_msgs.msg
 from geometry_msgs.msg import TransformStamped, PolygonStamped, Polygon
-from tf.transformations import quaternion_from_euler
+from tf.transformations import quaternion_from_euler, quaternion_from_matrix
 import tf2_ros
 from std_msgs.msg import Int32
 
@@ -251,19 +251,15 @@ class PoseEstimation:
         unit_nrml_y = np.array([-unit_nrml_x[1], unit_nrml_x[0], 0])
         unit_nrml_z = np.cross(unit_nrml_x, unit_nrml_y)
 
+        R = np.stack((unit_nrml_x, unit_nrml_y, unit_nrml_z)).T
+        T = np.eye(4); T[:3, :3] = R
+        q = quaternion_from_matrix(T)
+
         # rospy.loginfo(f"x {unit_nrml_x} y {unit_nrml_y} z {unit_nrml_z}")
         # rospy.loginfo(f"xy_dot {np.dot(unit_nrml_x,unit_nrml_y)}")
         # rospy.loginfo(f"xz_dot {np.dot(unit_nrml_x,unit_nrml_z)}")
         # rospy.loginfo(f"yz_dot {np.dot(unit_nrml_y,unit_nrml_z)}")
 
-        alpha = self.compute_euler_ang(unit_nrml_x, self.x_unit)
-        beta = self.compute_euler_ang(unit_nrml_y, self.y_unit)
-        gamma = self.compute_euler_ang(unit_nrml_z, self.z_unit)
-        rospy.loginfo(
-            f"alpha {np.degrees(alpha)} beta {np.degrees(beta)} gamma {np.degrees(gamma)}"
-        )
-
-        q = quaternion_from_euler(alpha, beta, gamma)  # returns array of x,y,z,w
         rospy.loginfo(f"{q}")
         torso_pose = [
             torso_point.x,
