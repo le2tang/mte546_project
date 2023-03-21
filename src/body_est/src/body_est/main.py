@@ -51,7 +51,6 @@ class EKFInterface:
         orientation = self.get_orientation()
 
         tf = Transform()
-        rospy.loginfo(f"position {position}")
         tf.translation.x = position[0]
         tf.translation.y = position[1]
         tf.translation.z = position[2]
@@ -78,7 +77,13 @@ class BodyPoseNode:
 
         self.vicon = ViconInterface()
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
-        self.dist_error_threshold = 0.1
+        # TODO fix thresholds or give better initial estimate since error
+        # is very large at beginning which prevents anything from running
+        #self.dist_error_threshold = 0.5
+        #self.ang_error_threshold = np.pi/2 
+        self.dist_error_threshold = 10 
+        self.ang_error_threshold = 2 
+
 
     def get_error(self, ref_tf, link_tf):
         error_tf = Transform()
@@ -138,12 +143,13 @@ class BodyPoseNode:
         predict_tf = self.ekf.get_transform()
 
         # Compare the measurement to the prior estimate
-        error_tf, dist_error, (rot_axis, rot_angle) = self.get_error(
+        error_tf, dist_error, (rot_angle, rot_axis) = self.get_error(
             predict_tf, msg.transform
         )
         # Ignore the measurement if the difference is too large
+        rospy.loginfo(f"dist err {dist_error} ang err {rot_angle}")
         if (dist_error < self.dist_error_threshold) and (
-            rot_angle < self.ang_error_threshold
+            rot_angle.all() < self.ang_error_threshold
         ):
             measurement = np.array(
                 [
@@ -164,6 +170,8 @@ class BodyPoseNode:
         estimate_tf.header.frame_id = "camera_link"
         estimate_tf.child_frame_id = "body_est/body"
         estimate_tf.transform = self.ekf.get_transform()
+
+        rospy.loginfo(f"body filtered {estimate_tf.transform}")
 
         # Broadcast Transform from EKF prediction
         self.tf_broadcaster.sendTransform(estimate_tf)
