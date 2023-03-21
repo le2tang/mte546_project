@@ -248,7 +248,9 @@ class PoseEstimation:
 
         # returns a dictionary of the landmarks, their info, and their 3D coordinate
         unit_nrml_x = self.compute_unit_normal(landmarks, torso_point)
-        unit_nrml_y = np.array([-unit_nrml_x[1], unit_nrml_x[0], 0])
+        #unit_nrml_y = np.array([-unit_nrml_x[1], unit_nrml_x[0], 0])
+        # use shoulder vector as y unit normal
+        unit_nrml_y = self.compute_y_normal(landmarks) 
         unit_nrml_z = np.cross(unit_nrml_x, unit_nrml_y)
 
         R = np.stack((unit_nrml_x, unit_nrml_y, unit_nrml_z)).T
@@ -307,6 +309,23 @@ class PoseEstimation:
         plane_normal = np.cross(vector_1, vector_2)
         plane_unit_normal = plane_normal / np.linalg.norm(plane_normal)
         return plane_unit_normal
+
+    def compute_y_normal(self, landmarks):
+        p_rsh = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
+        p_lsh = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
+
+        vector_1 = np.array(
+            [
+                p_lsh.x - p_rsh.x,
+                p_lsh.y - p_rsh.y,
+                p_lsh.z - p_rsh.z,
+            ]
+        )
+
+        # might need to check direction is no into bed
+        y_unit_normal = vector_1 / np.linalg.norm(vector_1)
+        return y_unit_normal
+
 
     def est_torso_pt(self, landmarks):
         # take in 3-4 points, use vectors to find the axes
