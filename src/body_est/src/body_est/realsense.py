@@ -4,7 +4,7 @@ from actionlib import SimpleActionServer
 from tf2_geometry_msgs import PointStamped
 import tf2_msgs.msg
 from geometry_msgs.msg import TransformStamped, PolygonStamped, Polygon
-from tf.transformations import quaternion_from_euler
+from tf.transformations import quaternion_from_euler, quaternion_from_matrix
 import tf2_ros
 from std_msgs.msg import Int32
 
@@ -248,22 +248,20 @@ class PoseEstimation:
 
         # returns a dictionary of the landmarks, their info, and their 3D coordinate
         unit_nrml_x = self.compute_unit_normal(landmarks, torso_point)
-        unit_nrml_y = np.array([-unit_nrml_x[1], unit_nrml_x[0], 0])
+        #unit_nrml_y = np.array([-unit_nrml_x[1], unit_nrml_x[0], 0])
+        # use shoulder vector as y unit normal
+        unit_nrml_y = self.compute_y_normal(landmarks) 
         unit_nrml_z = np.cross(unit_nrml_x, unit_nrml_y)
+
+        R = np.stack((unit_nrml_x, unit_nrml_y, unit_nrml_z)).T
+        T = np.eye(4); T[:3, :3] = R
+        q = quaternion_from_matrix(T)
 
         # rospy.loginfo(f"x {unit_nrml_x} y {unit_nrml_y} z {unit_nrml_z}")
         # rospy.loginfo(f"xy_dot {np.dot(unit_nrml_x,unit_nrml_y)}")
         # rospy.loginfo(f"xz_dot {np.dot(unit_nrml_x,unit_nrml_z)}")
         # rospy.loginfo(f"yz_dot {np.dot(unit_nrml_y,unit_nrml_z)}")
 
-        alpha = self.compute_euler_ang(unit_nrml_x, self.x_unit)
-        beta = self.compute_euler_ang(unit_nrml_y, self.y_unit)
-        gamma = self.compute_euler_ang(unit_nrml_z, self.z_unit)
-        rospy.loginfo(
-            f"alpha {np.degrees(alpha)} beta {np.degrees(beta)} gamma {np.degrees(gamma)}"
-        )
-
-        q = quaternion_from_euler(alpha, beta, gamma)  # returns array of x,y,z,w
         rospy.loginfo(f"{q}")
         torso_pose = [
             torso_point.x,
@@ -311,6 +309,23 @@ class PoseEstimation:
         plane_normal = np.cross(vector_1, vector_2)
         plane_unit_normal = plane_normal / np.linalg.norm(plane_normal)
         return plane_unit_normal
+
+    def compute_y_normal(self, landmarks):
+        p_rsh = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
+        p_lsh = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
+
+        vector_1 = np.array(
+            [
+                p_lsh.x - p_rsh.x,
+                p_lsh.y - p_rsh.y,
+                p_lsh.z - p_rsh.z,
+            ]
+        )
+
+        # might need to check direction is no into bed
+        y_unit_normal = vector_1 / np.linalg.norm(vector_1)
+        return y_unit_normal
+
 
     def est_torso_pt(self, landmarks):
         # take in 3-4 points, use vectors to find the axes
