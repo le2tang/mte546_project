@@ -8,6 +8,7 @@ import tf_conversions
 from geometry_msgs.msg import Transform, TransformStamped
 from body_est.ekf import EKF
 from body_est.model_equations import PoseModel
+import matplotlib.pyplot as plt
 
 
 class ViconInterface:
@@ -46,6 +47,12 @@ class EKFInterface:
         # Return quaternion as [x y z w]
         return (self.ekf.state[6:10] / np.sqrt(np.sum(np.square(self.ekf.state[6:10])))).flatten()
 
+    def get_k(self):
+        return self.ekf.K_k
+
+    def get_k_norm(self):
+        return np.linalg.norm(self.ekf.K_k)
+
     def get_transform(self):
         position = self.get_position()
         orientation = self.get_orientation()
@@ -79,10 +86,14 @@ class BodyPoseNode:
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
         # TODO fix thresholds or give better initial estimate since error
         # is very large at beginning which prevents anything from running
-        #self.dist_error_threshold = 0.5
-        #self.ang_error_threshold = np.pi/2 
         self.dist_error_threshold = 10 
         self.ang_error_threshold = 2 
+        self.dist_errs = []
+        self.ang_errs = []
+        
+        self.measured = []
+        self.filtered = []
+        self.k = []
 
 
     def get_error(self, ref_tf, link_tf):
@@ -163,6 +174,7 @@ class BodyPoseNode:
                 ]
             )
             self.ekf.correct(measurement)
+            self.measured.append(measurement)
 
         # Report the posterior estimate transform
         estimate_tf = TransformStamped()
@@ -170,8 +182,20 @@ class BodyPoseNode:
         estimate_tf.header.frame_id = "camera_link"
         estimate_tf.child_frame_id = "body_est/body"
         estimate_tf.transform = self.ekf.get_transform()
-
-        rospy.loginfo(f"body filtered {estimate_tf.transform}")
+        filtered = np.array(
+            [
+                estimate_tf.transform.translation.x,
+                estimate_tf.transform.translation.y,
+                estimate_tf.transform.translation.z,
+                estimate_tf.transform.rotation.x,
+                estimate_tf.transform.rotation.y,
+                estimate_tf.transform.rotation.z,
+                estimate_tf.transform.rotation.w,
+            ]
+        )
+        self.filtered.append(filtered)
+ 
+        #rospy.loginfo(f"body filtered {estimate_tf.transform}")
 
         # Broadcast Transform from EKF prediction
         self.tf_broadcaster.sendTransform(estimate_tf)
@@ -181,8 +205,89 @@ class BodyPoseNode:
         # error_tf, (rot_axis, rot_angle) = self.get_error(
         #    ground_tf, dist_error, estimate_tf.transform
         # )
+        self.k.append(self.ekf.get_k_norm())
+
+    def write_to_file(self):
+        plt.plot(self.k)
+        plt.xlabel("Iteration #")
+        plt.ylabel("K gain norm val")
+        plt.title("K gain norm trend")
+        plt.savefig("/home/felix/mte546/mte546_project/k_gain.png")
+
+        self.measured = np.array(self.measured)
+        self.filtered = np.array(self.filtered)
+        rospy.loginfo("x y z qz qy qz qw")
+        rospy.loginfo(f"measured var {np.var(self.measured, axis=0)}")
+        rospy.loginfo(f"filtered var {np.var(self.filtered, axis=0)}")
+        rospy.loginfo(f"measured max delta {np.max(self.measured, axis=0) - np.min(self.measured, axis=0)}")
+        rospy.loginfo(f"filtered max delta {np.max(self.filtered, axis=0) - np.min(self.filtered, axis=0)}")
+
+
+        self.measured_diff = np.diff(self.measured, axis=0)
+        self.filtered_diff = np.diff(self.filtered, axis=0)
+
+        # plot position trends
+        plt.clf()
+        plt.plot(self.measured[:, 0], label="Meas pX")
+        plt.plot(self.measured[:, 1], label="Meas pY")
+        plt.plot(self.measured[:, 2], label="Meas pZ")
+        plt.plot(self.filtered[:, 0], label="filtered pX")
+        plt.plot(self.filtered[:, 1], label="filtered pY")
+        plt.plot(self.filtered[:, 2], label="filtered pZ")
+        plt.legend()
+        plt.xlabel("Iteration #")
+        plt.ylabel("value (m)")
+        plt.title("Positions")
+        plt.savefig("/home/felix/mte546/mte546_project/positions.png")
+
+        # plot quaterion trends
+        plt.clf()
+        plt.plot(self.measured[:, 3], label="Meas qX")
+        plt.plot(self.measured[:, 4], label="Meas qY")
+        plt.plot(self.measured[:, 5], label="Meas qZ")
+        plt.plot(self.measured[:, 6], label="Meas qW")
+        plt.plot(self.filtered[:, 3], label="filtered qX")
+        plt.plot(self.filtered[:, 4], label="filtered qY")
+        plt.plot(self.filtered[:, 5], label="filtered qZ")
+        plt.plot(self.filtered[:, 6], label="filtered qW")
+        plt.legend()
+        plt.xlabel("Iteration #")
+        plt.ylabel("value (rad)")
+        plt.title("Quaterions")
+        plt.savefig("/home/felix/mte546/mte546_project/quat.png")
+
+        # plot position diff trends
+        plt.clf()
+        plt.plot(self.measured_diff[:, 0], label="Meas pX")
+        plt.plot(self.measured_diff[:, 1], label="Meas pY")
+        plt.plot(self.measured_diff[:, 2], label="Meas pZ")
+        plt.plot(self.filtered_diff[:, 0], label="filtered pX")
+        plt.plot(self.filtered_diff[:, 1], label="filtered pY")
+        plt.plot(self.filtered_diff[:, 2], label="filtered pZ")
+        plt.legend()
+        plt.xlabel("Iteration #")
+        plt.ylabel("value (m)")
+        plt.title("Position deltas")
+        plt.savefig("/home/felix/mte546/mte546_project/position_deltas.png")
+
+        # plot quaterion trends
+        plt.clf()
+        plt.plot(self.measured_diff[:, 3], label="Meas qX")
+        plt.plot(self.measured_diff[:, 4], label="Meas qY")
+        plt.plot(self.measured_diff[:, 5], label="Meas qZ")
+        plt.plot(self.measured_diff[:, 6], label="Meas qW")
+        plt.plot(self.filtered_diff[:, 3], label="filtered qX")
+        plt.plot(self.filtered_diff[:, 4], label="filtered qY")
+        plt.plot(self.filtered_diff[:, 5], label="filtered qZ")
+        plt.plot(self.filtered_diff[:, 6], label="filtered qW")
+        plt.legend()
+        plt.xlabel("Iteration #")
+        plt.ylabel("value (rad)")
+        plt.title("Quaterion deltas")
+        plt.savefig("/home/felix/mte546/mte546_project/quat_deltas.png")
 
 
 if __name__ == "__main__":
     body_pose_node = BodyPoseNode()
     rospy.spin()
+    rospy.on_shutdown(body_pose_node.write_to_file)

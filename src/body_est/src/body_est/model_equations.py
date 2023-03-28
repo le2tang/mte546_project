@@ -27,7 +27,7 @@ class PoseModel:
         jacobian = np.zeros((13, 13))
         jacobian[:3, :3] = np.eye(3)  # dp/dp
         jacobian[3:6, 3:6] = np.eye(3)  # dv/dv
-        jacobian[:3, 3:6] = np.eye(3) * 0.5  # dp/dv
+        jacobian[:3, 3:6] = np.eye(3) * self.dt  # dp/dv
         jacobian[6:10, 6:10] = self._dq_dq(w)  # dq/dq
         jacobian[6:10, 10:13] = self._dq_dw(q)  # dq/dw
         jacobian[10:13, 10:13] = np.eye(3)  # dw/dw
@@ -57,8 +57,8 @@ class PoseModel:
         return np.eye(13)
 
     def process_noise(self):
-        lin_vel_var = 0.1
-        ang_vel_var = np.square(np.deg2rad(10))
+        lin_vel_var = 0.05
+        ang_vel_var = np.square(np.deg2rad(100))
 
         state_proc_var = np.array(
             [
@@ -78,6 +78,8 @@ class PoseModel:
             ]
         )
         state_var_proj = self.forward_jacobian(state_proc_var)
+
+        #state_var_proj[6:10, 6:10] = 1.5*state_var_proj[6:10, 6:10]
         return state_var_proj @ np.diagflat(state_proc_var) @ state_var_proj.T
 
     def measurement_noise(self):

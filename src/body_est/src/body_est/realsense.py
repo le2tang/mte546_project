@@ -262,7 +262,7 @@ class PoseEstimation:
         # rospy.loginfo(f"xz_dot {np.dot(unit_nrml_x,unit_nrml_z)}")
         # rospy.loginfo(f"yz_dot {np.dot(unit_nrml_y,unit_nrml_z)}")
 
-        rospy.loginfo(f"{q}")
+        #rospy.loginfo(f"{q}")
         torso_pose = [
             torso_point.x,
             torso_point.y,
