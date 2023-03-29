@@ -3,6 +3,8 @@ import numpy as np
 from enum import Enum
 from geometry_msgs.msg import Transform
 
+import tf_conversions
+
 class BodyPolygon(Enum):
     LEFT_SHOULDER = 0
     MID_SHOULDER = 1
@@ -23,14 +25,14 @@ class FitAnatomicalFrame:
 
         R = np.stack((unit_nrml_x, unit_nrml_y, unit_nrml_z)).T
         T = np.eye(4); T[:3, :3] = R
-        q = quaternion_from_matrix(T)
+        q = tf_conversions.transformations.quaternion_from_matrix(T)
 
         body_tf = Transform()
         body_tf.translation = torso_pt
-        body_tf.translation.rotation.x = q[0]
-        body_tf.translation.rotation.y = q[1]
-        body_tf.translation.rotation.z = q[2]
-        body_tf.translation.rotation.w = q[3]
+        body_tf.rotation.x = q[0]
+        body_tf.rotation.y = q[1]
+        body_tf.rotation.z = q[2]
+        body_tf.rotation.w = q[3]
 
         return body_tf
 

@@ -79,7 +79,7 @@ class BodyPoseNode:
     def __init__(self):
         rospy.init_node("body_pose_node")
         
-        self.body_pts_sub = rospy.Subscriber("torso_polygon", PolygonStamped, self.check_body_points)
+        self.body_pts_sub = rospy.Subscriber("torso_polygon", PolygonStamped, self.update)
 
         self.ekf = EKFInterface()
         self.fit_anatomical_frame = FitAnatomicalFrame()
@@ -102,8 +102,8 @@ class BodyPoseNode:
         self.ekf.predict()
         predict_tf = self.ekf.get_transform()
 
-        body_pts = msg.points
-        body_tf = self.fit_anatomical_frame(
+        body_pts = msg.polygon.points
+        body_tf = self.fit_anatomical_frame.get_tf(
             body_pts[BodyPolygon.LEFT_SHOULDER.value],
             body_pts[BodyPolygon.RIGHT_SHOULDER.value],
             body_pts[BodyPolygon.TORSO.value],
@@ -164,7 +164,10 @@ class BodyPoseNode:
         rospy.loginfo(f"dist err {dist_error} ang err {rot_angle}")
         if (dist_error < self.dist_error_threshold) and (
             rot_angle.all() < self.ang_error_threshold
-        )
+            ):
+            return True
+        return False
+
 
     def get_error(self, ref_tf, link_tf):
         error_tf = Transform()

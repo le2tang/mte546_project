@@ -3,7 +3,7 @@ from actionlib import SimpleActionServer
 
 from tf2_geometry_msgs import PointStamped
 import tf2_msgs.msg
-from geometry_msgs.msg import TransformStamped, PolygonStamped, Polygon
+from geometry_msgs.msg import TransformStamped, PolygonStamped, Polygon, Point
 from tf.transformations import quaternion_from_euler, quaternion_from_matrix
 import tf2_ros
 from std_msgs.msg import Int32
@@ -206,7 +206,6 @@ class PoseEstimation:
                 "mp_landmark": landmark_data,
                 "point": lm_point,
             }
-        # rospy.loginfo(f"{landmarks}")
 
         # get landmarks coords
         for lm in self.lm_body:
@@ -236,9 +235,9 @@ class PoseEstimation:
 
         #rospy.loginfo(f"{q}")
         torso_pose = [
-            torso_point.x,
-            torso_point.y,
-            torso_point.z,
+            torso_pt_stamped.point.x,
+            torso_pt_stamped.point.y,
+            torso_pt_stamped.point.z,
             q[0],
             q[1],
             q[2],
@@ -316,11 +315,11 @@ class PoseEstimation:
         mid_hip.z = 0.5 * (left_hip.z + right_hip.z)
 
         medial_lateral = np.array([[right_shoulder.x - left_shoulder.x], [right_shoulder.y - left_shoulder.y], [right_shoulder.z - left_shoulder.z]])
-        antero_posterior np.array([[mid_hip.x - mid_shoulder.x], [mid_hip.y - mid_shoulder.y], [mid_hip.z - mid_shoulder.z]])
+        antero_posterior = np.array([[mid_hip.x - mid_shoulder.x], [mid_hip.y - mid_shoulder.y], [mid_hip.z - mid_shoulder.z]])
         mid_shoulder_pvec = np.array([[mid_shoulder.x], [mid_shoulder.y], [mid_shoulder.z]])
 
         chest_pvec = mid_shoulder_pvec + 0.25 * (antero_posterior.T @ medial_lateral) / (medial_lateral.T @ medial_lateral) * medial_lateral
-        torso_point = Point(x=chest_pvec[0], y=chest_pvec[1], z=chest_pvec[2])
+        torso_point = Point(x=chest_pvec[0, 0], y=chest_pvec[1, 0], z=chest_pvec[2, 0])
 
         torso_polygon = PolygonStamped()
         torso_polygon.header.frame_id = "/camera_link"
