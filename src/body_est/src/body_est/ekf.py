@@ -7,8 +7,6 @@ class EKF:
 
         self.state = self.model.init_state()
         self.state_covar = self.model.init_state_covar()
-        self.process_noise = self.model.process_noise()
-        self.measurement_noise = self.model.measurement_noise()
         self.K_k = 1
 
     def predict(self):
@@ -17,7 +15,7 @@ class EKF:
 
         self.state = self.model.forward_model(self.state)
 
-        self.state_covar = A @ self.state_covar @ A.T + self.process_noise
+        self.state_covar = A @ self.state_covar @ A.T + self.model.process_noise(self.state)
 
         return self.state, self.state_covar
 
@@ -31,7 +29,7 @@ class EKF:
 
         # Calculate the measurement residual covariance
         C = self.model.measurement_jacobian(self.state)
-        S_k = C @ self.state_covar @ C.T + self.measurement_noise
+        S_k = C @ self.state_covar @ C.T + self.model.measurement_noise(self.state)
 
         # Calculate the Kalman gain
         K_k = self.state_covar @ C.T @ np.linalg.pinv(S_k)

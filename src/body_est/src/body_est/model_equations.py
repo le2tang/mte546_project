@@ -56,7 +56,7 @@ class PoseModel:
     def init_state_covar(self):
         return np.eye(13)
 
-    def process_noise(self):
+    def process_noise(self, state):
         lin_vel_var = 0.05
         ang_vel_var = np.square(np.deg2rad(100))
 
@@ -77,12 +77,11 @@ class PoseModel:
                 ang_vel_var,
             ]
         )
-        state_var_proj = self.forward_jacobian(state_proc_var)
+        
+        jacobian = self.forward_jacobian(state)
+        return jacobian @ np.diagflat(state_proc_var) @ jacobian.T
 
-        #state_var_proj[6:10, 6:10] = 1.5*state_var_proj[6:10, 6:10]
-        return state_var_proj @ np.diagflat(state_proc_var) @ state_var_proj.T
-
-    def measurement_noise(self):
+    def measurement_noise(self, state):
         return np.diagflat([1, 1, 1, 2, 2, 2, 2])
 
     def _state_position(self, state):
