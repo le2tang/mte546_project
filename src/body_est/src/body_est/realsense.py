@@ -216,8 +216,6 @@ class PoseEstimation:
             self.point_viz_pub.publish(landmarks[lm.value]["point"])
             
         torso_pt_stamped, torso_polygon = self.get_torso_pts(landmarks)
-        self.point_viz_pub.publish(torso_pt_stamped)
-
         # returns a dictionary of the landmarks, their info, and their 3D coordinate
         unit_nrml_x = self.compute_x_normal(landmarks, torso_pt_stamped.point)
         # use shoulder vector as y unit normal
@@ -243,6 +241,9 @@ class PoseEstimation:
             q[2],
             q[3],
         ]
+        torso_pt_stamped.point.x = torso_pt_stamped.point.x - 0.2
+        self.point_viz_pub.publish(torso_pt_stamped)
+
 
         return torso_pose
 
@@ -318,7 +319,7 @@ class PoseEstimation:
         antero_posterior = np.array([[mid_hip.x - mid_shoulder.x], [mid_hip.y - mid_shoulder.y], [mid_hip.z - mid_shoulder.z]])
         mid_shoulder_pvec = np.array([[mid_shoulder.x], [mid_shoulder.y], [mid_shoulder.z]])
 
-        chest_pvec = mid_shoulder_pvec + 0.25 * (antero_posterior.T @ medial_lateral) / (medial_lateral.T @ medial_lateral) * medial_lateral
+        chest_pvec = mid_shoulder_pvec + 0.25 * (antero_posterior - (antero_posterior.T @ medial_lateral) / (medial_lateral.T @ medial_lateral) * medial_lateral)
         torso_point = Point(x=chest_pvec[0, 0], y=chest_pvec[1, 0], z=chest_pvec[2, 0])
 
         torso_polygon = PolygonStamped()
