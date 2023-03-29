@@ -4,6 +4,7 @@ import rospy
 import numpy as np
 import tf2_ros
 import tf_conversions
+import cv2
 
 from geometry_msgs.msg import Transform, TransformStamped
 from body_est.ekf import EKF

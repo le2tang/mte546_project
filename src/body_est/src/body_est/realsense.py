@@ -11,6 +11,7 @@ from std_msgs.msg import Int32
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge, CvBridgeError
 import cv2
+import apriltag
 import mediapipe as mp
 import pyrealsense2 as rs
 import numpy as np
@@ -110,6 +111,10 @@ class PoseEstimation:
         self.pose_updated_pub = rospy.Publisher("/pose_updated", Int32, queue_size=1)
         self.updates_counter = 0
 
+        # april tag detector
+        self.options = apriltag.DetectorOptions(families="tag36h11")
+        self.detector = apriltag.Detector(self.options)
+
     def depth_image_cb(self, data):
         # store the latest depth image for processing
         try:
@@ -134,6 +139,12 @@ class PoseEstimation:
                 ) as pose:
                     self.rgb_img.flags.writeable = False
                     image = cv2.cvtColor(self.rgb_img, cv2.COLOR_BGR2RGB)
+
+                    # april tag ground truth
+                    #grey_image = cv2.cvtColor(self.rgb_img, cv2.COLOR_BGR2GRAY)
+                    #results = self.detector.detect(grey_image)
+
+
                     results = pose.process(image)
                     landmarks_list = results.pose_landmarks.landmark
                     torso = self.pose_estimate_body(landmarks_list)

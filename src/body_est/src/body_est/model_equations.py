@@ -79,7 +79,6 @@ class PoseModel:
         )
         state_var_proj = self.forward_jacobian(state_proc_var)
 
-        #state_var_proj[6:10, 6:10] = 1.5*state_var_proj[6:10, 6:10]
         return state_var_proj @ np.diagflat(state_proc_var) @ state_var_proj.T
 
     def measurement_noise(self):
