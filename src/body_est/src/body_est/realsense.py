@@ -102,8 +102,8 @@ class PoseEstimation:
         )
 
         # polygon pub
-        self.torso_plane_pub = rospy.Publisher(
-            "/torso_plane", PolygonStamped, queue_size=1
+        self.torso_polygon_pub = rospy.Publisher(
+            "/torso_polygon", PolygonStamped, queue_size=1
         )
 
         # new iteration pub
@@ -136,6 +136,7 @@ class PoseEstimation:
                     image = cv2.cvtColor(self.rgb_img, cv2.COLOR_BGR2RGB)
                     results = pose.process(image)
                     landmarks_list = results.pose_landmarks.landmark
+                    
                     torso = self.pose_estimate_body(landmarks_list)
                     rospy.loginfo(f"torso {torso}")
 
@@ -213,42 +214,13 @@ class PoseEstimation:
             landmarks[lm.value]["point"] = self.transform_point_cameralink(
                 self.landmark_to_3d(landmarks[lm.value]["point"])
             )
-
-        # process landmarks a bit
-        self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_SHOULDER.value]["point"])
-        self.point_viz_pub.publish(landmarks[Landmarks.LEFT_SHOULDER.value]["point"])
-        self.point_viz_pub.publish(landmarks[Landmarks.RIGHT_HIP.value]["point"])
-        self.point_viz_pub.publish(landmarks[Landmarks.LEFT_HIP.value]["point"])
-
-        torso_plane = PolygonStamped()
-        torso_plane.header.frame_id = "/camera_link"
-        torso_plane.header.stamp = rospy.Time.now()
-
-        # move points forward to see easier
-        right_shoulder_point = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
-        left_shoulder_point = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
-        right_hip_point = landmarks[Landmarks.RIGHT_HIP.value]["point"].point
-        left_hip_point = landmarks[Landmarks.LEFT_HIP.value]["point"].point
-
-        right_shoulder_point.x = right_shoulder_point.x - 0.2
-        left_shoulder_point.x = left_shoulder_point.x - 0.2
-        right_hip_point.x = right_hip_point.x - 0.2
-        left_hip_point.x = left_hip_point.x - 0.2
-
-        torso_plane.polygon.points.append(right_shoulder_point)
-        torso_plane.polygon.points.append(left_shoulder_point)
-        torso_plane.polygon.points.append(left_hip_point)
-        torso_plane.polygon.points.append(right_hip_point)
-        self.torso_plane_pub.publish(torso_plane)
-
-        torso_pt_stamped = self.est_torso_pt(landmarks)
+            self.point_viz_pub.publish(landmarks[lm.value]["point"])
+            
+        torso_pt_stamped, torso_polygon = self.get_torso_pts(landmarks)
         self.point_viz_pub.publish(torso_pt_stamped)
-        torso_point = torso_pt_stamped.point
-        rospy.loginfo(f"{torso_point}")
 
         # returns a dictionary of the landmarks, their info, and their 3D coordinate
-        unit_nrml_x = self.compute_unit_normal(landmarks, torso_point)
-        #unit_nrml_y = np.array([-unit_nrml_x[1], unit_nrml_x[0], 0])
+        unit_nrml_x = self.compute_x_normal(landmarks, torso_pt_stamped.point)
         # use shoulder vector as y unit normal
         unit_nrml_y = self.compute_y_normal(landmarks) 
         unit_nrml_z = np.cross(unit_nrml_x, unit_nrml_y)
@@ -280,7 +252,7 @@ class PoseEstimation:
         angle = np.arccos(c)
         return angle
 
-    def compute_unit_normal(self, landmarks, torso_point):
+    def compute_x_normal(self, landmarks, torso_point):
         # takes in landmarks and finds unit normal of plane
         # second point is the center point for the vectors
         # to be "crossed" upon
@@ -326,24 +298,51 @@ class PoseEstimation:
         y_unit_normal = vector_1 / np.linalg.norm(vector_1)
         return y_unit_normal
 
+    def get_torso_pts(self, landmarks):
+        left_shoulder = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
+        right_shoulder = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
 
-    def est_torso_pt(self, landmarks):
-        # take in 3-4 points, use vectors to find the axes
-        # average xyz values to get a point
-        p1 = landmarks[Landmarks.LEFT_SHOULDER.value]["point"].point
-        p2 = landmarks[Landmarks.RIGHT_SHOULDER.value]["point"].point
-        p3 = landmarks[Landmarks.RIGHT_HIP.value]["point"].point
-        p4 = landmarks[Landmarks.LEFT_HIP.value]["point"].point
+        left_hip = landmarks[Landmarks.LEFT_HIP.value]["point"].point
+        right_hip = landmarks[Landmarks.RIGHT_HIP.value]["point"].point
+
+        mid_shoulder = Point()
+        mid_shoulder.x = 0.5 * (left_shoulder.x + right_shoulder.x)
+        mid_shoulder.y = 0.5 * (left_shoulder.y + right_shoulder.y)
+        mid_shoulder.z = 0.5 * (left_shoulder.z + right_shoulder.z)
+
+        mid_hip = Point()
+        mid_hip.x = 0.5 * (left_hip.x + right_hip.x)
+        mid_hip.y = 0.5 * (left_hip.y + right_hip.y)
+        mid_hip.z = 0.5 * (left_hip.z + right_hip.z)
+
+        medial_lateral = np.array([[right_shoulder.x - left_shoulder.x], [right_shoulder.y - left_shoulder.y], [right_shoulder.z - left_shoulder.z]])
+        antero_posterior np.array([[mid_hip.x - mid_shoulder.x], [mid_hip.y - mid_shoulder.y], [mid_hip.z - mid_shoulder.z]])
+        mid_shoulder_pvec = np.array([[mid_shoulder.x], [mid_shoulder.y], [mid_shoulder.z]])
+
+        chest_pvec = mid_shoulder_pvec + 0.25 * (antero_posterior.T @ medial_lateral) / (medial_lateral.T @ medial_lateral) * medial_lateral
+        torso_point = Point(x=chest_pvec[0], y=chest_pvec[1], z=chest_pvec[2])
+
+        torso_polygon = PolygonStamped()
+        torso_polygon.header.frame_id = "/camera_link"
+        torso_polygon.header.stamp = rospy.Time.now()
+        torso_polygon.polygon.points = [
+            left_shoulder,
+            mid_shoulder,
+            right_shoulder,
+            torso_point,
+            right_hip,
+            mid_hip,
+            left_hip,
+        ]
+        self.torso_polygon_pub.publish(torso_polygon)
 
         torso_point_stamped = PointStamped()
         torso_point_stamped.header.frame_id = landmarks[Landmarks.LEFT_SHOULDER.value][
             "point"
         ].header.frame_id
-        torso_point_stamped.point.x = (p1.x + p2.x + p3.x + p4.x) / 4
-        torso_point_stamped.point.y = (p1.y + p2.y + p3.y + p4.y) / 4
-        torso_point_stamped.point.z = (p1.z + p2.z + p3.z + p4.z) / 4
+        torso_point_stamped.point = torso_point
 
-        return torso_point_stamped
+        return torso_point_stamped, torso_polygon
 
     def landmark_to_3d(self, point_stamped):
         # Compute the 3D coordinate of each pose. 3D values in mm
