@@ -8,6 +8,7 @@ import tf_conversions
 from geometry_msgs.msg import PolygonStamped, Transform, TransformStamped
 from body_est.ekf import EKF
 from body_est.fit_anatomical_frame import BodyPolygon, FitAnatomicalFrame
+from body_est.validate_body_points import ValidateBodyPoints
 from body_est.model_equations import PoseModel
 import matplotlib.pyplot as plt
 
@@ -82,7 +83,9 @@ class BodyPoseNode:
         self.body_pts_sub = rospy.Subscriber("torso_polygon", PolygonStamped, self.update)
 
         self.ekf = EKFInterface()
+
         self.fit_anatomical_frame = FitAnatomicalFrame()
+        self.validate_body_points = ValidateBodyPoints()
 
         self.vicon = ViconInterface()
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
@@ -162,11 +165,12 @@ class BodyPoseNode:
         )
         # Ignore the measurement if the difference is too large
         rospy.loginfo(f"dist err {dist_error} ang err {rot_angle}")
-        if (dist_error < self.dist_error_threshold) and (
-            rot_angle.all() < self.ang_error_threshold
-            ):
-            return True
-        return False
+        small_prior_error = (dist_error < self.dist_error_threshold) and (
+            rot_angle.all() < self.ang_error_threshold)
+
+        body_points_valid = self.validate_body_points.is_valid(body_pts)
+
+        return small_prior_error and body_points_valid
 
 
     def get_error(self, ref_tf, link_tf):
