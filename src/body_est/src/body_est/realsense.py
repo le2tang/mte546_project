@@ -176,10 +176,8 @@ class PoseEstimation:
 
                         q_rotz = quaternion_from_matrix(rot_z)
                         q_roty = quaternion_from_matrix(rot_y)
-                        q_rotx = quaternion_from_matrix(rot_x)
 
                         q_new = quaternion_multiply(q_rotz, q_roty)
-                        q_new = q_new/np.linalg.norm(q_new)
 
                         tag_trans.transform.translation.x = 0 
                         tag_trans.transform.translation.y = 0 
