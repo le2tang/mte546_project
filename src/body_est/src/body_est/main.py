@@ -4,10 +4,10 @@ import rospy
 import numpy as np
 import tf2_ros
 import tf_conversions
-import cv2
 
-from geometry_msgs.msg import Transform, TransformStamped
+from geometry_msgs.msg import PolygonStamped, Transform, TransformStamped
 from body_est.ekf import EKF
+from body_est.fit_anatomical_frame import BodyPolygon, FitAnatomicalFrame
 from body_est.model_equations import PoseModel
 import matplotlib.pyplot as plt
 
@@ -78,10 +78,11 @@ class EKFInterface:
 class BodyPoseNode:
     def __init__(self):
         rospy.init_node("body_pose_node")
-
-        self.realsense_sub = rospy.Subscriber("torso_tf", TransformStamped, self.update)
+        
+        self.body_pts_sub = rospy.Subscriber("torso_polygon", PolygonStamped, self.update)
 
         self.ekf = EKFInterface()
+        self.fit_anatomical_frame = FitAnatomicalFrame()
 
         self.vicon = ViconInterface()
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
@@ -95,6 +96,77 @@ class BodyPoseNode:
         self.measured = []
         self.filtered = []
         self.k = []
+
+    def update(self, msg):
+        # Get the a priori estimate of the current state
+        self.ekf.predict()
+        predict_tf = self.ekf.get_transform()
+
+        body_pts = msg.polygon.points
+        body_tf = self.fit_anatomical_frame.get_tf(
+            body_pts[BodyPolygon.LEFT_SHOULDER.value],
+            body_pts[BodyPolygon.RIGHT_SHOULDER.value],
+            body_pts[BodyPolygon.TORSO.value],
+        )
+
+        if self.validate_meas(body_pts, predict_tf, body_tf):
+            measurement = np.array(
+                [
+                    body_tf.translation.x,
+                    body_tf.translation.y,
+                    body_tf.translation.z,
+                    body_tf.rotation.x,
+                    body_tf.rotation.y,
+                    body_tf.rotation.z,
+                    body_tf.rotation.w,
+                ]
+            )
+            self.ekf.correct(measurement)
+            self.measured.append(measurement)
+
+        # Report the posterior estimate transform
+        estimate_tf = TransformStamped()
+        estimate_tf.header.stamp = rospy.Time.now()
+        estimate_tf.header.frame_id = "camera_link"
+        estimate_tf.child_frame_id = "body_est/body"
+        estimate_tf.transform = self.ekf.get_transform()
+        filtered = np.array(
+            [
+                estimate_tf.transform.translation.x,
+                estimate_tf.transform.translation.y,
+                estimate_tf.transform.translation.z,
+                estimate_tf.transform.rotation.x,
+                estimate_tf.transform.rotation.y,
+                estimate_tf.transform.rotation.z,
+                estimate_tf.transform.rotation.w,
+            ]
+        )
+        self.filtered.append(filtered)
+ 
+        #rospy.loginfo(f"body filtered {estimate_tf.transform}")
+
+        # Broadcast Transform from EKF prediction
+        self.tf_broadcaster.sendTransform(estimate_tf)
+
+        # ground_tf = self.vicon.get_cam_to_body()
+
+        # error_tf, (rot_axis, rot_angle) = self.get_error(
+        #    ground_tf, dist_error, estimate_tf.transform
+        # )
+        self.k.append(self.ekf.get_k_norm())
+
+    def validate_meas(self, body_pts, predict_tf, body_tf):
+        # Compare the measurement to the prior estimate
+        error_tf, dist_error, (rot_angle, rot_axis) = self.get_error(
+            predict_tf, body_tf
+        )
+        # Ignore the measurement if the difference is too large
+        rospy.loginfo(f"dist err {dist_error} ang err {rot_angle}")
+        if (dist_error < self.dist_error_threshold) and (
+            rot_angle.all() < self.ang_error_threshold
+            ):
+            return True
+        return False
 
 
     def get_error(self, ref_tf, link_tf):
@@ -148,65 +220,6 @@ class BodyPoseNode:
         rot_axis = error_quat[:3] / np.sqrt(1 - error_quat[3] * error_quat[3])
 
         return error_tf, dist_error, (rot_angle, rot_axis)
-
-    def update(self, msg):
-        # Get the a priori estimate of the current state
-        self.ekf.predict()
-        predict_tf = self.ekf.get_transform()
-
-        # Compare the measurement to the prior estimate
-        error_tf, dist_error, (rot_angle, rot_axis) = self.get_error(
-            predict_tf, msg.transform
-        )
-        # Ignore the measurement if the difference is too large
-        rospy.loginfo(f"dist err {dist_error} ang err {rot_angle}")
-        if (dist_error < self.dist_error_threshold) and (
-            rot_angle.all() < self.ang_error_threshold
-        ):
-            measurement = np.array(
-                [
-                    msg.transform.translation.x,
-                    msg.transform.translation.y,
-                    msg.transform.translation.z,
-                    msg.transform.rotation.x,
-                    msg.transform.rotation.y,
-                    msg.transform.rotation.z,
-                    msg.transform.rotation.w,
-                ]
-            )
-            self.ekf.correct(measurement)
-            self.measured.append(measurement)
-
-        # Report the posterior estimate transform
-        estimate_tf = TransformStamped()
-        estimate_tf.header.stamp = rospy.Time.now()
-        estimate_tf.header.frame_id = "camera_link"
-        estimate_tf.child_frame_id = "body_est/body"
-        estimate_tf.transform = self.ekf.get_transform()
-        filtered = np.array(
-            [
-                estimate_tf.transform.translation.x,
-                estimate_tf.transform.translation.y,
-                estimate_tf.transform.translation.z,
-                estimate_tf.transform.rotation.x,
-                estimate_tf.transform.rotation.y,
-                estimate_tf.transform.rotation.z,
-                estimate_tf.transform.rotation.w,
-            ]
-        )
-        self.filtered.append(filtered)
- 
-        #rospy.loginfo(f"body filtered {estimate_tf.transform}")
-
-        # Broadcast Transform from EKF prediction
-        self.tf_broadcaster.sendTransform(estimate_tf)
-
-        # ground_tf = self.vicon.get_cam_to_body()
-
-        # error_tf, (rot_axis, rot_angle) = self.get_error(
-        #    ground_tf, dist_error, estimate_tf.transform
-        # )
-        self.k.append(self.ekf.get_k_norm())
 
     def write_to_file(self):
         plt.plot(self.k)
