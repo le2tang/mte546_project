@@ -6,7 +6,6 @@
 
 	<include file="$(find realsense2_camera)/launch/rs_camera.launch"/>
 	<param name="/camera/realsense2_camera/align_depth" type="bool" value="True"/>
-	<!--param name="/camera/realsense2_camera/filters" type="str" value="pointcloud"/-->
 	<param name="/camera/realsense2_camera/enable_pointcloud" type="bool" value="True"/>
 
 	<!-- launch april tag finder -->
@@ -18,5 +17,5 @@
 	<remap from="camera_rect/image_rect" to="camera/color/image_raw"/>
 
 	<include file="$(find apriltag_ros)/launch/continuous_detection.launch"/>
-	<rosparam command="load" file="tags.yaml"/>
+	<rosparam command="load" file="configs/tags.yaml"/>
 </launch>
