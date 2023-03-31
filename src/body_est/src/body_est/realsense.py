@@ -4,7 +4,7 @@ from actionlib import SimpleActionServer
 from tf2_geometry_msgs import PointStamped
 import tf2_msgs.msg
 from geometry_msgs.msg import TransformStamped, PolygonStamped, Polygon, Point
-from tf.transformations import quaternion_from_euler, quaternion_from_matrix
+from tf.transformations import quaternion_from_euler, quaternion_from_matrix, quaternion_multiply, rotation_matrix
 import tf2_ros
 from std_msgs.msg import Int32
 
@@ -61,6 +61,9 @@ class PoseEstimation:
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         self.ref_link = "camera_link"
         self.depth_optical_link_frame = "optical_depth_link_frame"
+        self.tag_ref = "camera_color_optical_frame"
+        self.tag_frame = "tag_0"
+        self.tag_adj_frame = "tag_adj"
 
         # landmarks
         self.lm_body = [
@@ -96,10 +99,14 @@ class PoseEstimation:
         self.z_unit = np.array([0, 0, 1])
 
         # transform pub
-        self.torso_tf_pub = rospy.Publisher("/tf", tf2_msgs.msg.TFMessage, queue_size=1)
+        self.tf_pub = rospy.Publisher("/tf", tf2_msgs.msg.TFMessage, queue_size=3)
         self.torso_only_tf_pub = rospy.Publisher(
             "torso_tf", TransformStamped, queue_size=1
         )
+        self.tag_adj_stamped_tf_pub = rospy.Publisher(
+            "/tag_adj_tf", TransformStamped, queue_size=1
+        )
+ 
 
         # polygon pub
         self.torso_polygon_pub = rospy.Publisher(
@@ -152,8 +159,60 @@ class PoseEstimation:
                     t.transform.rotation.z = torso[5]
                     t.transform.rotation.w = torso[6]
                     tfm = tf2_msgs.msg.TFMessage([t])
-                    self.torso_tf_pub.publish(tfm)
+                    self.tf_pub.publish(tfm)
                     self.torso_only_tf_pub.publish(t)
+
+                    try: 
+                        tag_trans = self.tf_buffer.lookup_transform(self.ref_link,self.tag_frame, rospy.Time())
+
+                        tag_trans.header.stamp = rospy.Time.now()
+                        tag_trans.header.frame_id = "tag_0"
+                        tag_trans.child_frame_id = "tag_adj"
+
+                        angz = np.pi/2 
+                        angy = np.pi/2 
+                        rot_z = rotation_matrix(angz, (0,0,1))
+                        rot_y = rotation_matrix(angy, (0,1,0))
+
+                        #rot_z = np.array([[0, -np.sin(angz), 0,0],[np.sin(angz),0,0,0],[0,0,1,0], [0,0,0,1]]) 
+                        #rot_y = np.array([[0, 0, np.sin(angy), 0],[0,1,0,0],[-np.sin(angy),0,0,0], [0,0,0,1]]) 
+                        rospy.loginfo(f"z {rot_z}")
+                        rospy.loginfo(f"y {rot_y}")
+
+                        q_rot1 = quaternion_from_matrix(rot_z)
+                        rospy.loginfo(f"q rot 1 {q_rot1}")
+                        q_rot2 = quaternion_from_matrix(rot_y)
+
+                        q_orig = [tag_trans.transform.rotation.x, tag_trans.transform.rotation.y, tag_trans.transform.rotation.z, tag_trans.transform.rotation.w]
+                        rospy.loginfo(f"q orig 1 {q_orig}")
+
+                        #q_rot1 = quaternion_from_euler(np.pi/2, 0, 0)
+                        #q_rot2 = quaternion_from_euler(0, np.pi/2, 0)
+                        #q_rot2 = quaternion_from_euler(0, np.pi/2, 0)
+
+
+                        #q_new = quaternion_multiply(q_rot, tag_trans.transform.rotation)
+                        q_new = quaternion_multiply(q_rot1, q_orig)
+                        q_new = q_new/np.linalg.norm(q_new)
+                        rospy.loginfo(f"q new {q_new}")
+
+                        #q_new = quaternion_multiply(q_rot2, q_new)
+                        tag_trans.transform.translation.x = 0 
+                        tag_trans.transform.translation.y = 0 
+                        tag_trans.transform.translation.z = 0 
+
+                        tag_trans.transform.rotation.x = q_new[0]
+                        tag_trans.transform.rotation.y = q_new[1] 
+                        tag_trans.transform.rotation.z = q_new[2] 
+                        tag_trans.transform.rotation.w = q_new[3] 
+
+                        #rospy.loginfo(f"tag trans {tag_trans}")
+                        tfm = tf2_msgs.msg.TFMessage([tag_trans])
+                        self.tf_pub.publish(tfm)
+                        #self.tag_adj_stamped_tf_pub.publish(tag_trans)
+                    except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+                        rospy.loginfo("could not find tf?")
+
 
                     # update topic to signal that count has incremented
                     self.updates_counter = self.updates_counter + 1
