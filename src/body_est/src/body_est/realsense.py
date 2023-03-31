@@ -169,34 +169,18 @@ class PoseEstimation:
                         tag_trans.header.frame_id = "tag_0"
                         tag_trans.child_frame_id = "tag_adj"
 
-                        angz = np.pi/2 
-                        angy = np.pi/2 
+                        angz = -np.pi/2 
+                        angy = -np.pi/2 
                         rot_z = rotation_matrix(angz, (0,0,1))
                         rot_y = rotation_matrix(angy, (0,1,0))
 
-                        #rot_z = np.array([[0, -np.sin(angz), 0,0],[np.sin(angz),0,0,0],[0,0,1,0], [0,0,0,1]]) 
-                        #rot_y = np.array([[0, 0, np.sin(angy), 0],[0,1,0,0],[-np.sin(angy),0,0,0], [0,0,0,1]]) 
-                        rospy.loginfo(f"z {rot_z}")
-                        rospy.loginfo(f"y {rot_y}")
+                        q_rotz = quaternion_from_matrix(rot_z)
+                        q_roty = quaternion_from_matrix(rot_y)
+                        q_rotx = quaternion_from_matrix(rot_x)
 
-                        q_rot1 = quaternion_from_matrix(rot_z)
-                        rospy.loginfo(f"q rot 1 {q_rot1}")
-                        q_rot2 = quaternion_from_matrix(rot_y)
-
-                        q_orig = [tag_trans.transform.rotation.x, tag_trans.transform.rotation.y, tag_trans.transform.rotation.z, tag_trans.transform.rotation.w]
-                        rospy.loginfo(f"q orig 1 {q_orig}")
-
-                        #q_rot1 = quaternion_from_euler(np.pi/2, 0, 0)
-                        #q_rot2 = quaternion_from_euler(0, np.pi/2, 0)
-                        #q_rot2 = quaternion_from_euler(0, np.pi/2, 0)
-
-
-                        #q_new = quaternion_multiply(q_rot, tag_trans.transform.rotation)
-                        q_new = quaternion_multiply(q_rot1, q_orig)
+                        q_new = quaternion_multiply(q_rotz, q_roty)
                         q_new = q_new/np.linalg.norm(q_new)
-                        rospy.loginfo(f"q new {q_new}")
 
-                        #q_new = quaternion_multiply(q_rot2, q_new)
                         tag_trans.transform.translation.x = 0 
                         tag_trans.transform.translation.y = 0 
                         tag_trans.transform.translation.z = 0 
