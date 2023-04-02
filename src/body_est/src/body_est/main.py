@@ -112,8 +112,6 @@ class BodyPoseNode:
             body_pts[BodyPolygon.TORSO.value],
         )
 
-        print(f"res = {self.validate_meas(body_pts, predict_tf, body_tf)}")
-
         if self.validate_meas(body_pts, predict_tf, body_tf):
             measurement = np.array(
                 [
@@ -172,8 +170,7 @@ class BodyPoseNode:
 
         body_points_valid = self.validate_body_points.is_valid(body_pts)
 
-        print(f"small prior err {small_prior_error}")
-        print(f"body pts valid{body_points_valid}")
+        print(f"small prior err {small_prior_error} body pts valid{body_points_valid}")
 
         return small_prior_error and np.all(body_points_valid)
 

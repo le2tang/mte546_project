@@ -5,8 +5,8 @@ from body_est.fit_anatomical_frame import BodyPolygon
 
 class ValidateBodyPoints:
     def __init__(self, p_thresh=0.01):
-        self.dist_mean = np.array([0.2, 0.15, 0.2, 0.38, 0.35]) 
-        self.dist_std = np.array([0.1, 0.1, 0.1, 0.1, 0.1])
+        self.dist_mean = np.array([0.2, 0.1, 0.2, 0.3, 0.32]) 
+        self.dist_std = np.array([0.05, 0.05, 0.05, 0.05, 0.05])
         self.thresh = -2 * np.log(np.sqrt(2 * np.pi) * p_thresh)
 
     def is_valid(self, points):
@@ -28,10 +28,13 @@ class ValidateBodyPoints:
         #dist = np.concatenate((torso_dist, shoulder_dist))
         dist = np.append(torso_dist, shoulder_dist)
 
-        print(dist)
+        print(f"distances {dist}")
 
         log_p = np.square((dist - self.dist_mean) / self.dist_std)
-        return log_p > self.thresh
+        # shouldn't this be less than the threshold? It seems like we are computing the error in distance and so I think we would like the error to be less than the threshold to be valid
+        #return log_p > self.thresh
+        return log_p < self.thresh
+
 
     def pt2vec(self, pt, shape=(3,1)):
         return np.reshape(np.array([pt.x, pt.y, pt.z]), shape)

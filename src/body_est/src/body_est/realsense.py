@@ -138,7 +138,7 @@ class PoseEstimation:
                     landmarks_list = results.pose_landmarks.landmark
                     
                     torso = self.pose_estimate_body(landmarks_list)
-                    rospy.loginfo(f"torso {torso}")
+                    #rospy.loginfo(f"torso {torso}")
 
                     t = TransformStamped()
                     t.header.frame_id = "/camera_link"
