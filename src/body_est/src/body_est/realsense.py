@@ -251,9 +251,18 @@ class PoseEstimation:
         # get landmarks coords
         for lm in self.lm_body:
             # transform landmark to 3D pose and transform coords to base link
-            landmarks[lm.value]["point"] = self.transform_point_cameralink(
-                self.landmark_to_3d(landmarks[lm.value]["point"])
-            )
+            if lm.value == 12: 
+                landmarks[lm.value]["point"] = self.transform_point_cameralink(
+                    self.landmark_to_3d(landmarks[lm.value]["point"], 1)
+                )
+            elif lm.value == 11:
+                landmarks[lm.value]["point"] = self.transform_point_cameralink(
+                    self.landmark_to_3d(landmarks[lm.value]["point"], 2)
+                )
+            else:
+                landmarks[lm.value]["point"] = self.transform_point_cameralink(
+                    self.landmark_to_3d(landmarks[lm.value]["point"], 0)
+                )
             self.point_viz_pub.publish(landmarks[lm.value]["point"])
             
         torso_pt_stamped, torso_polygon = self.get_torso_pts(landmarks)
@@ -386,10 +395,24 @@ class PoseEstimation:
 
         return torso_point_stamped, torso_polygon
 
-    def landmark_to_3d(self, point_stamped):
+    def landmark_to_3d(self, point_stamped, shoulder_pt=0):
         # Compute the 3D coordinate of each pose. 3D values in mm
-        x_pixel = int(point_stamped.point.x * self.camera_intrinsics.width)
-        y_pixel = int(point_stamped.point.y * self.camera_intrinsics.height)
+        x_pixel = 0
+        y_pixel = 0
+
+        # right shoulder
+        shift = 0
+        if shoulder_pt == 1:
+            x_pixel = int(point_stamped.point.x * self.camera_intrinsics.width)  + shift
+            y_pixel = int(point_stamped.point.y * self.camera_intrinsics.height) + shift
+        # left shoulder
+        elif shoulder_pt == 2:
+            x_pixel = int(point_stamped.point.x * self.camera_intrinsics.width) - shift
+            y_pixel = int(point_stamped.point.y * self.camera_intrinsics.height) + shift
+        else:
+            x_pixel = int(point_stamped.point.x * self.camera_intrinsics.width)
+            y_pixel = int(point_stamped.point.y * self.camera_intrinsics.height)
+ 
 
         depth = self.depth_img[y_pixel][x_pixel]
 
