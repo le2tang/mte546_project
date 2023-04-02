@@ -13,31 +13,6 @@ from body_est.model_equations import PoseModel
 import matplotlib.pyplot as plt
 
 
-class ViconInterface:
-    TF_REF_NAME = "vicon_world"
-    CAMERA_NAME = "camera"
-    BODY_NAME = "body"
-
-    def __init__(self):
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
-
-    def get_cam_to_body(self):
-        try:
-            return self.tf_buffer.lookup_transform(
-                self.CAMERA_NAME, self.BODY_NAME, rospy.Time()
-            )
-        except (
-            tf2_ros.LookupException,
-            tf2_ros.ConnectivityException,
-            tf2_ros.ExtrapolationException,
-        ) as e:
-            rospy.logerr(
-                f"Transform lookup from {self.CAMERA_NAME} to {self.BODY_NAME} failed:\n{e}"
-            )
-            return None
-
-
 class EKFInterface:
     def __init__(self):
         self.ekf = EKF(PoseModel())
@@ -87,8 +62,12 @@ class BodyPoseNode:
         self.fit_anatomical_frame = FitAnatomicalFrame()
         self.validate_body_points = ValidateBodyPoints()
 
-        self.vicon = ViconInterface()
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
+        # transforms
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        self.ref_link = "camera_link"
+        self.ground_tf = 'tag_adj'
         # TODO fix thresholds or give better initial estimate since error
         # is very large at beginning which prevents anything from running
         self.dist_error_threshold = 10 
@@ -150,12 +129,15 @@ class BodyPoseNode:
 
         # Broadcast Transform from EKF prediction
         self.tf_broadcaster.sendTransform(estimate_tf)
+        try:
+            truth_frame = self.tf_buffer.lookup_transform(self.ref_link,self.ground_tf, rospy.Time())
+            error_tf, dist_error, (rot_axis, rot_angle) = self.get_error(
+               truth_frame.transform, estimate_tf.transform
+            )
+            rospy.loginfo(f"Estimate distance error {dist_error}")
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            rospy.loginfo("could not find tf?")
 
-        # ground_tf = self.vicon.get_cam_to_body()
-
-        # error_tf, (rot_axis, rot_angle) = self.get_error(
-        #    ground_tf, dist_error, estimate_tf.transform
-        # )
         self.k.append(self.ekf.get_k_norm())
 
     def validate_meas(self, body_pts, predict_tf, body_tf):

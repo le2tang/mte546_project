@@ -282,9 +282,10 @@ class PoseEstimation:
             q[2],
             q[3],
         ]
-        torso_pt_stamped.point.x = torso_pt_stamped.point.x - 0.2
-        self.point_viz_pub.publish(torso_pt_stamped)
 
+        # only modify position for Rviz visibility
+        torso_pt_stamped.point.x = torso_pt_stamped.point.x - 0.05
+        self.point_viz_pub.publish(torso_pt_stamped)
 
         return torso_pose
 
