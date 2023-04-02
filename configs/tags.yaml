@@ -1,0 +1,12 @@
+/apriltag_ros_continuous_node/standalone_tags:
+        [
+                {id: 0, size: 0.08},
+                {id: 6, size: 0.08},
+                {id: 8, size: 0.08},
+                {id: 9, size: 0.08},
+        ]
+/apriltag_ros_continuous_node/tag_bundles:
+        []
+/apriltag_ros_continuous_node/camera_frame:
+        "camera_link"
+
