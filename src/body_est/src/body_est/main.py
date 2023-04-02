@@ -78,6 +78,8 @@ class BodyPoseNode:
         self.measured = []
         self.filtered = []
         self.k = []
+        self.pose_errs = [] # x,y,z,qx,qy,qz,qw
+        self.other_errs = [] # dist_err, rot_angle, rot_axis
 
     def update(self, msg):
         # Get the a priori estimate of the current state
@@ -135,6 +137,10 @@ class BodyPoseNode:
                truth_frame.transform, estimate_tf.transform
             )
             rospy.loginfo(f"Estimate distance error {dist_error}")
+            pose_err = [error_tf.translation.x, error_tf.translation.y, error_tf.translation.z, error_tf.rotation.x, error_tf.rotation.y, error_tf.rotation.z, error_tf.rotation.w]
+            other_err = [dist_error, rot_angle, rot_axis]
+            self.pose_errs.append(pose_err)
+            self.other_errs.append(other_err)
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
             rospy.loginfo("could not find tf?")
 
@@ -287,8 +293,37 @@ class BodyPoseNode:
         plt.title("Quaterion deltas")
         plt.savefig("/home/felix/mte546/mte546_project/quat_deltas.png")
 
+    def write_to_file_new(self):
+        self.pose_errs = np.array(self.pose_errs)
+        self.other_errs = np.array(self.other_errs)
+
+        # plot position trends
+        plt.clf()
+        plt.plot(self.pose_errs[:, 0], label="Err X")
+        plt.plot(self.pose_errs[:, 1], label="Err Y")
+        plt.plot(self.pose_errs[:, 2], label="Err Z")
+        plt.plot(self.other_errs[:, 0], label="Err Euclid")
+        plt.legend()
+        plt.xlabel("Iteration #")
+        plt.ylabel("Position Error (m)")
+        plt.title("Position error")
+        plt.savefig("/home/felix/mte546/mte546_project/position_err.png")
+
+        # plot orientation trends
+        plt.clf()
+        plt.plot(self.pose_errs[:, 3], label="Err QX")
+        plt.plot(self.pose_errs[:, 4], label="Err QY")
+        plt.plot(self.pose_errs[:, 5], label="Err QZ")
+        plt.plot(self.pose_errs[:, 6], label="Err QW")
+        plt.legend()
+        plt.xlabel("Iteration #")
+        plt.ylabel("Orientation Error (rad)")
+        plt.title("Orientation error")
+        plt.savefig("/home/felix/mte546/mte546_project/orientation_err.png")
+
 
 if __name__ == "__main__":
     body_pose_node = BodyPoseNode()
     rospy.spin()
-    rospy.on_shutdown(body_pose_node.write_to_file)
+    #rospy.on_shutdown(body_pose_node.write_to_file)
+    rospy.on_shutdown(body_pose_node.write_to_file_new)
