@@ -8,33 +8,9 @@ import tf_conversions
 from geometry_msgs.msg import PolygonStamped, Transform, TransformStamped
 from body_est.ekf import EKF
 from body_est.fit_anatomical_frame import BodyPolygon, FitAnatomicalFrame
+from body_est.validate_body_points import ValidateBodyPoints
 from body_est.model_equations import PoseModel
 import matplotlib.pyplot as plt
-
-
-class ViconInterface:
-    TF_REF_NAME = "vicon_world"
-    CAMERA_NAME = "camera"
-    BODY_NAME = "body"
-
-    def __init__(self):
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
-
-    def get_cam_to_body(self):
-        try:
-            return self.tf_buffer.lookup_transform(
-                self.CAMERA_NAME, self.BODY_NAME, rospy.Time()
-            )
-        except (
-            tf2_ros.LookupException,
-            tf2_ros.ConnectivityException,
-            tf2_ros.ExtrapolationException,
-        ) as e:
-            rospy.logerr(
-                f"Transform lookup from {self.CAMERA_NAME} to {self.BODY_NAME} failed:\n{e}"
-            )
-            return None
 
 
 class EKFInterface:
@@ -82,10 +58,16 @@ class BodyPoseNode:
         self.body_pts_sub = rospy.Subscriber("torso_polygon", PolygonStamped, self.update)
 
         self.ekf = EKFInterface()
-        self.fit_anatomical_frame = FitAnatomicalFrame()
 
-        self.vicon = ViconInterface()
+        self.fit_anatomical_frame = FitAnatomicalFrame()
+        self.validate_body_points = ValidateBodyPoints()
+
         self.tf_broadcaster = tf2_ros.TransformBroadcaster()
+        # transforms
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        self.ref_link = "camera_link"
+        self.ground_tf = 'tag_adj'
         # TODO fix thresholds or give better initial estimate since error
         # is very large at beginning which prevents anything from running
         self.dist_error_threshold = 10 
@@ -96,6 +78,8 @@ class BodyPoseNode:
         self.measured = []
         self.filtered = []
         self.k = []
+        self.pose_errs = [] # x,y,z,qx,qy,qz,qw
+        self.other_errs = [] # dist_err, rot_angle, rot_axis
 
     def update(self, msg):
         # Get the a priori estimate of the current state
@@ -123,6 +107,12 @@ class BodyPoseNode:
             )
             self.ekf.correct(measurement)
             self.measured.append(measurement)
+        else:
+            # Set new state orientation as valid measurement
+            self.ekf.ekf.state[6] = self.measured[-1][3]
+            self.ekf.ekf.state[7] = self.measured[-1][4] 
+            self.ekf.ekf.state[8] = self.measured[-1][5] 
+            self.ekf.ekf.state[9] = self.measured[-1][6] 
 
         # Report the posterior estimate transform
         estimate_tf = TransformStamped()
@@ -147,12 +137,19 @@ class BodyPoseNode:
 
         # Broadcast Transform from EKF prediction
         self.tf_broadcaster.sendTransform(estimate_tf)
+        try:
+            truth_frame = self.tf_buffer.lookup_transform(self.ref_link,self.ground_tf, rospy.Time())
+            error_tf, dist_error, (rot_axis, rot_angle) = self.get_error(
+               truth_frame.transform, estimate_tf.transform
+            )
+            rospy.loginfo(f"Estimate distance error {dist_error}")
+            pose_err = [error_tf.translation.x, error_tf.translation.y, error_tf.translation.z, error_tf.rotation.x, error_tf.rotation.y, error_tf.rotation.z, error_tf.rotation.w]
+            other_err = [dist_error, rot_angle, rot_axis]
+            self.pose_errs.append(pose_err)
+            self.other_errs.append(other_err)
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            rospy.loginfo("could not find tf?")
 
-        # ground_tf = self.vicon.get_cam_to_body()
-
-        # error_tf, (rot_axis, rot_angle) = self.get_error(
-        #    ground_tf, dist_error, estimate_tf.transform
-        # )
         self.k.append(self.ekf.get_k_norm())
 
     def validate_meas(self, body_pts, predict_tf, body_tf):
@@ -162,12 +159,14 @@ class BodyPoseNode:
         )
         # Ignore the measurement if the difference is too large
         rospy.loginfo(f"dist err {dist_error} ang err {rot_angle}")
-        if (dist_error < self.dist_error_threshold) and (
-            rot_angle.all() < self.ang_error_threshold
-            ):
-            return True
-        return False
+        small_prior_error = (dist_error < self.dist_error_threshold) and (
+            rot_angle.all() < self.ang_error_threshold)
 
+        body_points_valid = self.validate_body_points.is_valid(body_pts)
+
+        print(f"small prior err {small_prior_error} body pts valid{body_points_valid}")
+
+        return small_prior_error and np.all(body_points_valid)
 
     def get_error(self, ref_tf, link_tf):
         error_tf = Transform()
@@ -300,8 +299,37 @@ class BodyPoseNode:
         plt.title("Quaterion deltas")
         plt.savefig("/home/felix/mte546/mte546_project/quat_deltas.png")
 
+    def write_to_file_new(self):
+        self.pose_errs = np.array(self.pose_errs)
+        self.other_errs = np.array(self.other_errs)
+
+        # plot position trends
+        plt.clf()
+        plt.plot(self.pose_errs[:, 0], label="Err X")
+        plt.plot(self.pose_errs[:, 1], label="Err Y")
+        plt.plot(self.pose_errs[:, 2], label="Err Z")
+        plt.plot(self.other_errs[:, 0], label="Err Euclid")
+        plt.legend()
+        plt.xlabel("Iteration #")
+        plt.ylabel("Position Error (m)")
+        plt.title("Position error")
+        plt.savefig("/home/felix/mte546/mte546_project/position_err.png")
+
+        # plot orientation trends
+        plt.clf()
+        plt.plot(self.pose_errs[:, 3], label="Err QX")
+        plt.plot(self.pose_errs[:, 4], label="Err QY")
+        plt.plot(self.pose_errs[:, 5], label="Err QZ")
+        plt.plot(self.pose_errs[:, 6], label="Err QW")
+        plt.legend()
+        plt.xlabel("Iteration #")
+        plt.ylabel("Orientation Error (rad)")
+        plt.title("Orientation error")
+        plt.savefig("/home/felix/mte546/mte546_project/orientation_err.png")
+
 
 if __name__ == "__main__":
     body_pose_node = BodyPoseNode()
     rospy.spin()
-    rospy.on_shutdown(body_pose_node.write_to_file)
+    #rospy.on_shutdown(body_pose_node.write_to_file)
+    rospy.on_shutdown(body_pose_node.write_to_file_new)

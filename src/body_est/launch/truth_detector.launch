@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 <launch>
 	<!-- launch camera node -->
+	<!--param name ="/use_sim_time" value="true"/-->
 
 	<!--include file="$(find usb_cam)/launch/usb_cam-test.launch"/-->
 
