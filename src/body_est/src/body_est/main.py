@@ -106,12 +106,13 @@ class BodyPoseNode:
                 ]
             )
             self.ekf.correct(measurement)
-            # Set new state orientation as valid measurement
-            self.ekf.state[6] = body_tf.rotation.x
-            self.ekf.state[7] = body_tf.rotation.y
-            self.ekf.state[8] = body_tf.rotation.z
-            self.ekf.state[9] = body_tf.rotation.w
             self.measured.append(measurement)
+        else:
+            # Set new state orientation as valid measurement
+            self.ekf.ekf.state[6] = self.measured[-1][3]
+            self.ekf.ekf.state[7] = self.measured[-1][4] 
+            self.ekf.ekf.state[8] = self.measured[-1][5] 
+            self.ekf.ekf.state[9] = self.measured[-1][6] 
 
         # Report the posterior estimate transform
         estimate_tf = TransformStamped()
