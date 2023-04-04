@@ -28,7 +28,7 @@ class ValidateBodyPoints:
         #dist = np.concatenate((torso_dist, shoulder_dist))
         dist = np.append(torso_dist, shoulder_dist)
 
-        print(f"distances {dist}")
+        #print(f"distances {dist}")
 
         log_p = np.square((dist - self.dist_mean) / self.dist_std)
         # shouldn't this be less than the threshold? It seems like we are computing the error in distance and so I think we would like the error to be less than the threshold to be valid

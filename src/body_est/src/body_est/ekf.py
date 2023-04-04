@@ -36,7 +36,6 @@ class EKF:
         # Calculate the Kalman gain
         K_k = self.state_covar @ C.T @ np.linalg.pinv(S_k)
         self.K_k = K_k
-        print(f"k gain {np.linalg.norm(K_k)}") 
 
         # Update state estimate for time k
         self.state = self.state + K_k @ measurement_residual
