@@ -12,6 +12,7 @@ from body_est.validate_body_points import ValidateBodyPoints
 from body_est.model_equations import PoseModel
 import matplotlib.pyplot as plt
 import itertools
+import time
 
 
 class EKFInterface:
@@ -84,6 +85,8 @@ class BodyPoseNode:
         self.other_errs = [] # dist_err, rot_angle, rot_axis
         self.meas_errs = [] # x,y,z,qx,qy,qz,qw
         self.m_other_errs = [] # dist_err, rot_angle, rot_axis
+        self.init_time = time.time() 
+        self.times = []
 
     def update(self, msg):
         # Get the a priori estimate of the current state
@@ -144,10 +147,10 @@ class BodyPoseNode:
         try:
             truth_frame = self.tf_buffer.lookup_transform(self.ref_link,self.ground_tf, rospy.Time())
             measured_frame = self.tf_buffer.lookup_transform(self.ref_link,self.meas_tf, rospy.Time())
-            error_tf, dist_error, (rot_axis, rot_angle) = self.get_error(
+            error_tf, dist_error, (rot_angle, rot_axis) = self.get_error(
                truth_frame.transform, estimate_tf.transform
             )
-            m_error_tf, m_dist_error, (m_rot_axis, m_rot_angle) = self.get_error(
+            m_error_tf, m_dist_error, (m_rot_angle, m_rot_axis) = self.get_error(
                measured_frame.transform, estimate_tf.transform
             )
             pose_err = [error_tf.translation.x, error_tf.translation.y, error_tf.translation.z, error_tf.rotation.x, error_tf.rotation.y, error_tf.rotation.z, error_tf.rotation.w]
@@ -164,6 +167,7 @@ class BodyPoseNode:
             rospy.loginfo("could not find tf?")
 
         self.k.append(self.ekf.get_k_norm())
+        self.times.append(time.time() - self.init_time)
 
     def validate_meas(self, body_pts, predict_tf, body_tf):
         # Compare the measurement to the prior estimate
@@ -319,7 +323,7 @@ class BodyPoseNode:
         try:
             truth_frame = self.tf_buffer.lookup_transform(self.ref_link,self.ground_tf, rospy.Time())
             estimate_tf = self.tf_buffer.lookup_transform(self.ref_link,"body_est/body", rospy.Time())
-            error_tf, dist_error, (rot_axis, rot_angle) = self.get_error(
+            error_tf, dist_error, (rot_angle, rot_axis) = self.get_error(
                truth_frame.transform, estimate_tf.transform
             )
             static_pose = [error_tf.translation.x, error_tf.translation.y, error_tf.translation.z, error_tf.rotation.x, error_tf.rotation.y, error_tf.rotation.z, error_tf.rotation.w]
@@ -334,6 +338,10 @@ class BodyPoseNode:
  
         static_pose = np.array(static_pose)
         static_other_err = np.array(static_other_err)
+
+        #n_iters = len(self.pose_errs[:,0])
+        #total_time = 30 
+        #timestep = total_time/n_iters
 
         # remove initial offset
         self.pose_errs[:, 0] -= static_pose[0]
@@ -355,25 +363,25 @@ class BodyPoseNode:
         for data,name in zip([self.pose_errs, self.meas_errs], ["filtered", "measured"]):
             # plot position trends
             plt.clf()
-            plt.plot(data[:, 0], label="Err X")
-            plt.plot(data[:, 1], label="Err Y")
-            plt.plot(data[:, 2], label="Err Z")
+            plt.plot(self.times, data[:, 0], label="Err X")
+            plt.plot(self.times, data[:, 1], label="Err Y")
+            plt.plot(self.times, data[:, 2], label="Err Z")
             plt.legend()
-            plt.xlabel("Iteration #")
+            plt.xlabel("Time (s)")
             plt.ylabel("Position Error (m)")
-            plt.title("Position error")
+            plt.title("Position Error")
             plt.savefig(f"/home/felix/mte546/mte546_project/{name}_position_err.png")
 
             # plot orientation trends
             plt.clf()
-            plt.plot(data[:, 3], label="Err QX")
-            plt.plot(data[:, 4], label="Err QY")
-            plt.plot(data[:, 5], label="Err QZ")
-            plt.plot(data[:, 6], label="Err QW")
+            plt.plot(self.times, data[:, 3], label="Err QX")
+            plt.plot(self.times, data[:, 4], label="Err QY")
+            plt.plot(self.times, data[:, 5], label="Err QZ")
+            plt.plot(self.times, data[:, 6], label="Err QW")
             plt.legend()
-            plt.xlabel("Iteration #")
+            plt.xlabel("Time (s)")
             plt.ylabel("Quaternion Error")
-            plt.title("Orientation error")
+            plt.title("Orientation Error")
             plt.savefig(f"/home/felix/mte546/mte546_project/{name}_orientation_err.png")
 
             # take mse columnwise
@@ -397,6 +405,56 @@ class BodyPoseNode:
             var_qw = np.var(data[:,6])
             rospy.loginfo(f"{name} VAR X {var_x} VAR Y {var_y} VAR Z {var_z} VAR qX {var_qx} VAR qY {var_qy} VAR qZ {var_qz} VAR qW {var_qw}")
             errfile.write(f"{name} VAR X {var_x} VAR Y {var_y} VAR Z {var_z} VAR qX {var_qx} VAR qY {var_qy} VAR qZ {var_qz} VAR qW {var_qw}\n")
+
+        # other error metrics
+        for data,name in zip([self.other_errs, self.m_other_errs], ["filtered", "measured"]):
+            # plot position trends
+            plt.clf()
+            plt.plot(self.times, data[:, 0], label="Euclidean Err")
+            plt.legend()
+            plt.xlabel("Time (s)")
+            plt.ylabel("Position Error (m)")
+            plt.title("Position Error")
+            plt.savefig(f"/home/felix/mte546/mte546_project/{name}_position_err_mag.png")
+
+            # plot orientation trends
+            plt.clf()
+            plt.plot(self.times, data[:, 1], label="Angle Err")
+            plt.legend()
+            plt.xlabel("Time (s)")
+            plt.ylabel("Quaternion Angle Error (rad)")
+            plt.title("Orientation Angle Error")
+            plt.savefig(f"/home/felix/mte546/mte546_project/{name}_quat_err.png")
+
+            #plt.clf()
+            #plt.plot(self.times, data[:, 2][:,0], label="X axis Err")
+            #plt.plot(self.times, data[:, 2][:,1], label="Y axis Err")
+            #plt.plot(self.times, data[:, 2][:,2], label="Z axis Err")
+            #plt.legend()
+            #plt.xlabel("Iteration #")
+            #plt.ylabel("Quaternion Axis Error (rad)")
+            #plt.title("Orientation Axis Error")
+            #plt.savefig(f"/home/felix/mte546/mte546_project/{name}_axis_err.png")
+
+
+            # take mse columnwise
+            mse_euclid = (np.square(data[:,0])).mean(axis=0)
+            mse_angle = (np.square(data[:,1])).mean(axis=0)
+            #mse_xax = (np.square(data[:,2][:,0])).mean(axis=0)
+            #mse_yax = (np.square(data[:,2][:,1])).mean(axis=0)
+            #mse_zax = (np.square(data[:,2][:,2])).mean(axis=0)
+
+            rospy.loginfo(f"{name} MSE euclid {mse_euclid} MSE angle {mse_angle}")
+            errfile.write(f"{name} MSE euclid {mse_euclid} MSE angle {mse_angle}\n")
+
+            # take var columnwise
+            var_euclid = np.var(data[:,0])
+            var_angle = np.var(data[:,1])
+            #var_xax = np.var(data[:,2][:,0])
+            #var_yax = np.var(data[:,2][:,1])
+            #var_zax = np.var(data[:,2][:,2])
+            rospy.loginfo(f"{name} VAR euclid {var_euclid} VAR angle {var_angle}")
+            errfile.write(f"{name} VAR euclid {var_euclid} VAR angle {var_angle}\n")
 
         errfile.close()
 
